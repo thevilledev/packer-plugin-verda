@@ -1,0 +1,34 @@
+# Verda Instance Builder
+
+The `verda.instance` builder creates a Verda instance, waits for SSH, runs Packer provisioners, and returns an artifact.
+
+By default the artifact is the instance. With `artifact_type = "os_volume"`, the builder shuts down the instance, clones its OS volume, and returns the volume artifact. The current Verda Go SDK does not expose an instance snapshot/image creation operation or a boot-from-existing-volume field.
+
+## Required
+
+- `instance_type` - Verda instance type.
+- `image` - Verda image name or ID.
+- `hostname` - Hostname for the instance.
+
+Credentials are required through `client_id`/`client_secret` or `VERDA_CLIENT_ID`/`VERDA_CLIENT_SECRET`.
+
+## Optional
+
+- `location_code` - Defaults to `FIN-03`.
+- `contract` - Defaults to `PAY_AS_YOU_GO`, or `SPOT` when `is_spot = true`.
+- `ssh_key_ids` - Existing Verda SSH keys to add to the instance.
+- `skip_temporary_ssh_key` - Disable temporary SSH key creation.
+- `startup_script_id` - Existing Verda startup script.
+- `startup_script` - Script content to create before launching the instance.
+- `delete_startup_script` - Delete a created startup script during cleanup.
+- `artifact_type` - `instance` or `os_volume`. Defaults to `instance`.
+- `clone_os_volume` - Clone the source OS volume for an `os_volume` artifact. Defaults to `true`.
+- `artifact_volume_name` - Name for the cloned OS volume artifact.
+- `artifact_volume_location_code` - Location for the cloned OS volume. Defaults to `location_code`.
+- `skip_shutdown_before_artifact` - Skip shutting down the instance before creating an OS volume artifact.
+- `keep_instance` - Keep the created instance after the build.
+- `delete_permanently` - Permanently delete the instance during cleanup.
+- `volume_ids_to_delete` - Volume IDs to delete with the instance.
+- `poll_interval` - Instance polling interval. Defaults to `15s`.
+- `instance_timeout` - Timeout waiting for the instance to become reachable. Defaults to `30m`.
+- `api_timeout` - HTTP client timeout for Verda API calls. Defaults to `10m`.
