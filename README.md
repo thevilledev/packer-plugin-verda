@@ -4,6 +4,8 @@
 
 The `verda-instance` builder creates a Verda instance, waits for it to become reachable, runs provisioners, and returns either the created instance or a cloned OS volume artifact.
 
+Uses the official [verdacloud-sdk-go](https://github.com/verda-cloud/verdacloud-sdk-go) and works in tandem with the [terraform-provider-verda](https://github.com/verda-cloud/terraform-provider-verda).
+
 ## Installation
 
 ```hcl
