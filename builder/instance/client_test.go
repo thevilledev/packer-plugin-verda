@@ -87,6 +87,57 @@ func TestParseVolumeCloneResponse(t *testing.T) {
 	}
 }
 
+func TestSDKClientRetriesUnauthorizedWithFreshToken(t *testing.T) {
+	tokenRequests := 0
+	volumeRequests := 0
+
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/v1/oauth2/token":
+			tokenRequests++
+			token := "expired-token"
+			if tokenRequests > 1 {
+				token = "fresh-token"
+			}
+			return jsonResponse(r, http.StatusOK, fmt.Sprintf(`{"access_token":%q,"token_type":"Bearer","expires_in":3600}`, token)), nil
+		case "/v1/volumes/vol-source":
+			volumeRequests++
+			switch r.Header.Get("Authorization") {
+			case "Bearer expired-token":
+				return jsonResponse(r, http.StatusUnauthorized, `{"code":"unauthorized_request","message":"Access token is missing or invalid"}`), nil
+			case "Bearer fresh-token":
+				return jsonResponse(r, http.StatusOK, `{"id":"vol-source","name":"source","type":"NVMe","status":"detached","location":"FIN-03"}`), nil
+			default:
+				return nil, fmt.Errorf("Authorization = %q", r.Header.Get("Authorization"))
+			}
+		default:
+			return nil, fmt.Errorf("unexpected path %q", r.URL.Path)
+		}
+	})}
+
+	verdaSDK, err := verda.NewClient(
+		verda.WithClientID("client-id"),
+		verda.WithClientSecret("client-secret"),
+		verda.WithBaseURL("https://verda.test/v1"),
+		verda.WithHTTPClient(httpClient),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	client := sdkClient{client: verdaSDK}
+	volume, err := client.GetVolume(context.Background(), "vol-source")
+	if err != nil {
+		t.Fatalf("GetVolume: %v", err)
+	}
+	if volume.ID != "vol-source" {
+		t.Fatalf("volume ID = %q", volume.ID)
+	}
+	if tokenRequests != 2 || volumeRequests != 2 {
+		t.Fatalf("tokenRequests = %d, volumeRequests = %d", tokenRequests, volumeRequests)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {

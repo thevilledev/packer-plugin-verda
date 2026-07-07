@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -60,23 +61,33 @@ func newSDKClient(config *Config) (*verda.Client, error) {
 }
 
 func (c sdkClient) GetInstance(ctx context.Context, id string) (*verda.Instance, error) {
-	return c.client.Instances.GetByID(ctx, id)
+	return withAuthRetry(c.client, func() (*verda.Instance, error) {
+		return c.client.Instances.GetByID(ctx, id)
+	})
 }
 
 func (c sdkClient) CreateInstance(ctx context.Context, req verda.CreateInstanceRequest) (*verda.Instance, error) {
-	return c.client.Instances.Create(ctx, req)
+	return withAuthRetry(c.client, func() (*verda.Instance, error) {
+		return c.client.Instances.Create(ctx, req)
+	})
 }
 
 func (c sdkClient) DeleteInstance(ctx context.Context, id string, volumeIDs []string, deletePermanently bool) error {
-	return c.client.Instances.Delete(ctx, []string{id}, volumeIDs, deletePermanently)
+	return withAuthRetryNoResult(c.client, func() error {
+		return c.client.Instances.Delete(ctx, []string{id}, volumeIDs, deletePermanently)
+	})
 }
 
 func (c sdkClient) ShutdownInstance(ctx context.Context, id string) error {
-	return c.client.Instances.Shutdown(ctx, id)
+	return withAuthRetryNoResult(c.client, func() error {
+		return c.client.Instances.Shutdown(ctx, id)
+	})
 }
 
 func (c sdkClient) GetVolume(ctx context.Context, id string) (*verda.Volume, error) {
-	return c.client.Volumes.GetVolume(ctx, id)
+	return withAuthRetry(c.client, func() (*verda.Volume, error) {
+		return c.client.Volumes.GetVolume(ctx, id)
+	})
 }
 
 func (c sdkClient) CloneVolume(ctx context.Context, id string, req volumeCloneRequest) (string, error) {
@@ -84,31 +95,35 @@ func (c sdkClient) CloneVolume(ctx context.Context, id string, req volumeCloneRe
 		return "", fmt.Errorf("volume clone name is required")
 	}
 
-	bodyBytes, err := json.Marshal(volumeCloneActionRequest{
-		ID:           id,
-		Action:       verda.VolumeActionClone,
-		Name:         req.Name,
-		Type:         req.Type,
-		LocationCode: req.LocationCode,
+	return withAuthRetry(c.client, func() (string, error) {
+		bodyBytes, err := json.Marshal(volumeCloneActionRequest{
+			ID:           id,
+			Action:       verda.VolumeActionClone,
+			Name:         req.Name,
+			Type:         req.Type,
+			LocationCode: req.LocationCode,
+		})
+		if err != nil {
+			return "", fmt.Errorf("marshaling volume clone request: %w", err)
+		}
+
+		httpReq, err := c.client.NewRequest(ctx, http.MethodPut, "/volumes", bytes.NewReader(bodyBytes))
+		if err != nil {
+			return "", err
+		}
+
+		var body json.RawMessage
+		if _, err := c.client.Do(httpReq, &body); err != nil {
+			return "", err
+		}
+		return parseVolumeCloneResponse(body)
 	})
-	if err != nil {
-		return "", fmt.Errorf("marshaling volume clone request: %w", err)
-	}
-
-	httpReq, err := c.client.NewRequest(ctx, http.MethodPut, "/volumes", bytes.NewReader(bodyBytes))
-	if err != nil {
-		return "", err
-	}
-
-	var body json.RawMessage
-	if _, err := c.client.Do(httpReq, &body); err != nil {
-		return "", err
-	}
-	return parseVolumeCloneResponse(body)
 }
 
 func (c sdkClient) DeleteVolume(ctx context.Context, id string, force bool) error {
-	return c.client.Volumes.DeleteVolume(ctx, id, force)
+	return withAuthRetryNoResult(c.client, func() error {
+		return c.client.Volumes.DeleteVolume(ctx, id, force)
+	})
 }
 
 func parseVolumeCloneResponse(body json.RawMessage) (string, error) {
@@ -138,19 +153,53 @@ func parseVolumeCloneResponse(body json.RawMessage) (string, error) {
 }
 
 func (c sdkClient) CreateSSHKey(ctx context.Context, req verda.CreateSSHKeyRequest) (*verda.SSHKey, error) {
-	return c.client.SSHKeys.AddSSHKey(ctx, &req)
+	return withAuthRetry(c.client, func() (*verda.SSHKey, error) {
+		return c.client.SSHKeys.AddSSHKey(ctx, &req)
+	})
 }
 
 func (c sdkClient) DeleteSSHKey(ctx context.Context, id string) error {
-	return c.client.SSHKeys.DeleteSSHKey(ctx, id)
+	return withAuthRetryNoResult(c.client, func() error {
+		return c.client.SSHKeys.DeleteSSHKey(ctx, id)
+	})
 }
 
 func (c sdkClient) CreateStartupScript(ctx context.Context, req verda.CreateStartupScriptRequest) (*verda.StartupScript, error) {
-	return c.client.StartupScripts.AddStartupScript(ctx, &req)
+	return withAuthRetry(c.client, func() (*verda.StartupScript, error) {
+		return c.client.StartupScripts.AddStartupScript(ctx, &req)
+	})
 }
 
 func (c sdkClient) DeleteStartupScript(ctx context.Context, id string) error {
-	return c.client.StartupScripts.DeleteStartupScript(ctx, id)
+	return withAuthRetryNoResult(c.client, func() error {
+		return c.client.StartupScripts.DeleteStartupScript(ctx, id)
+	})
+}
+
+func withAuthRetry[T any](client *verda.Client, operation func() (T, error)) (T, error) {
+	result, err := operation()
+	if !isUnauthorized(err) {
+		return result, err
+	}
+	if _, authErr := client.Auth.Authenticate(); authErr != nil {
+		return result, fmt.Errorf("refreshing Verda access token after unauthorized response: %w", authErr)
+	}
+	return operation()
+}
+
+func withAuthRetryNoResult(client *verda.Client, operation func() error) error {
+	_, err := withAuthRetry(client, func() (struct{}, error) {
+		return struct{}{}, operation()
+	})
+	return err
+}
+
+func isUnauthorized(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *verda.APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusUnauthorized
 }
 
 func putClient(state multistep.StateBag, client verdaClient) {

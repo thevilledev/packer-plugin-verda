@@ -17,7 +17,7 @@ source "verda-instance" "ubuntu_volume" {
 
   artifact_type                  = "os_volume"
   artifact_volume_name           = "packer-verda-volume-root"
-  artifact_volume_location_codes = ["FIN-01", "FIN-02"]
+  artifact_volume_location_codes = ["FIN-02"]
 }
 
 build {
