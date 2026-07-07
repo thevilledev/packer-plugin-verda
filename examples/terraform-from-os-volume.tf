@@ -20,7 +20,9 @@ resource "verda_instance" "app" {
   hostname      = "app-from-packer-volume"
   description   = "Instance created from a Packer-built Verda OS volume"
   location      = "FIN-03"
+  ssh_key_ids   = []
 
   # Verda does not inject ssh_key_ids when booting from an existing OS volume.
-  # Bake /root/.ssh/authorized_keys into the volume during the Packer build.
+  # Keep this empty and bake /root/.ssh/authorized_keys into the volume during
+  # the Packer build.
 }
