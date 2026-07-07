@@ -37,3 +37,6 @@ go.work.sum
 # .idea/
 # .vscode/
 .DS_Store
+
+.terraform
+.terraform.lock.hcl
