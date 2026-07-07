@@ -45,8 +45,11 @@ func (s *stepCreateSSHKey) Run(ctx context.Context, state multistep.StateBag) mu
 	ui.Say("Creating temporary Verda SSH key...")
 
 	key, err := getClient(state).CreateSSHKey(ctx, verda.CreateSSHKeyRequest{
-		Name:      s.Config.TemporarySSHKeyName,
-		PublicKey: strings.TrimSpace(string(s.Config.Comm.SSHPublicKey)),
+		Name: s.Config.TemporarySSHKeyName,
+		PublicKey: temporarySSHPublicKey(
+			s.Config.Comm.SSHPublicKey,
+			firstNonEmpty(s.Config.Comm.SSHTemporaryKeyPairName, s.Config.TemporarySSHKeyName),
+		),
 	})
 	if err != nil {
 		state.Put("error", fmt.Errorf("creating temporary SSH key: %w", err))
@@ -67,6 +70,18 @@ func (s *stepCreateSSHKey) Cleanup(state multistep.StateBag) {
 	if err := getClient(state).DeleteSSHKey(context.Background(), id); err != nil {
 		ui.Error(fmt.Sprintf("Error deleting temporary SSH key %s: %s", id, err))
 	}
+}
+
+func temporarySSHPublicKey(publicKey []byte, comment string) string {
+	trimmed := strings.TrimSpace(string(publicKey))
+	if comment == "" {
+		return trimmed
+	}
+	parts := strings.Fields(trimmed)
+	if len(parts) < 2 {
+		return trimmed
+	}
+	return parts[0] + " " + parts[1] + " " + comment
 }
 
 type stepCreateStartupScript struct {

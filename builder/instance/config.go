@@ -215,6 +215,9 @@ func (c *Config) setDefaults() {
 		}
 		c.TemporarySSHKeyName = "packer-" + runID
 	}
+	if c.Comm.SSHTemporaryKeyPairName == "" {
+		c.Comm.SSHTemporaryKeyPairName = c.TemporarySSHKeyName
+	}
 	if len(c.AllowedSSHStatuses) == 0 {
 		c.AllowedSSHStatuses = []string{"running"}
 	}

@@ -92,6 +92,9 @@ func TestConfigPrepareDefaults(t *testing.T) {
 	if c.Comm.SSHUsername != defaultSSHUsername {
 		t.Fatalf("SSHUsername = %q", c.Comm.SSHUsername)
 	}
+	if c.Comm.SSHTemporaryKeyPairName != c.TemporarySSHKeyName {
+		t.Fatalf("SSHTemporaryKeyPairName = %q, TemporarySSHKeyName = %q", c.Comm.SSHTemporaryKeyPairName, c.TemporarySSHKeyName)
+	}
 	if c.Description == "" {
 		t.Fatal("Description was not defaulted")
 	}

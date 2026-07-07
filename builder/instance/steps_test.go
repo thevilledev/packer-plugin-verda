@@ -162,7 +162,7 @@ func TestStepCreateSSHKey(t *testing.T) {
 	if client.createSSHKeyReq == nil {
 		t.Fatal("expected SSH key creation")
 	}
-	if client.createSSHKeyReq.PublicKey != "ssh-rsa AAAA test" {
+	if client.createSSHKeyReq.PublicKey != "ssh-rsa AAAA packer-key" {
 		t.Fatalf("PublicKey = %q", client.createSSHKeyReq.PublicKey)
 	}
 	if got := cfg.SSHKeyIDs[0]; got != "key-1" {
