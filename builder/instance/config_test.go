@@ -2,7 +2,66 @@ package instance
 
 import (
 	"testing"
+
+	"github.com/hashicorp/hcl/v2/hcldec"
+	"github.com/hashicorp/hcl/v2/hclparse"
 )
+
+func TestBuilderConfigSpecIncludesCommunicatorFields(t *testing.T) {
+	var b Builder
+	spec := b.ConfigSpec()
+
+	communicatorFields := []string{
+		"communicator",
+		"ssh_username",
+		"ssh_private_key_file",
+		"temporary_key_pair_name",
+		"temporary_key_pair_type",
+		"temporary_key_pair_bits",
+	}
+	for _, field := range communicatorFields {
+		if _, ok := spec[field]; !ok {
+			t.Fatalf("ConfigSpec() missing communicator field %q", field)
+		}
+	}
+
+	if _, ok := spec["ssh_username"].(*hcldec.AttrSpec); !ok {
+		t.Fatalf("ssh_username spec = %T, want *hcldec.AttrSpec", spec["ssh_username"])
+	}
+}
+
+func TestConfigPrepareHCLCommunicatorFields(t *testing.T) {
+	var b Builder
+	parser := hclparse.NewParser()
+	file, diags := parser.ParseHCL([]byte(`
+client_id               = "client-id"
+client_secret           = "client-secret"
+instance_type           = "V100"
+image                   = "ubuntu-24.04"
+hostname                = "packer-test"
+ssh_username            = "ubuntu"
+temporary_key_pair_name = "packer-test"
+`), "test.pkr.hcl")
+	if diags.HasErrors() {
+		t.Fatalf("ParseHCL returned errors: %s", diags.Error())
+	}
+
+	val, diags := hcldec.Decode(file.Body, b.ConfigSpec(), nil)
+	if diags.HasErrors() {
+		t.Fatalf("Decode returned errors: %s", diags.Error())
+	}
+
+	var c Config
+	if _, _, err := c.Prepare(val); err != nil {
+		t.Fatalf("Prepare returned error: %s", err)
+	}
+	if c.Comm.SSHUsername != "ubuntu" {
+		t.Fatalf("SSHUsername = %q", c.Comm.SSHUsername)
+	}
+	if c.Comm.SSHTemporaryKeyPairName != "packer-test" {
+		t.Fatalf("SSHTemporaryKeyPairName = %q", c.Comm.SSHTemporaryKeyPairName)
+	}
+}
 
 func TestConfigPrepareDefaults(t *testing.T) {
 	t.Setenv("VERDA_CLIENT_ID", "client-id")

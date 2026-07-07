@@ -22,14 +22,7 @@ type Builder struct {
 
 // ConfigSpec returns the HCL2 schema for the builder.
 func (b *Builder) ConfigSpec() hcldec.ObjectSpec {
-	spec := b.config.FlatMapstructure().HCL2Spec()
-	for key, value := range b.config.Comm.FlatMapstructure().HCL2Spec() {
-		if _, exists := spec[key]; exists {
-			panic(fmt.Sprintf("duplicate HCL2 config field %q", key))
-		}
-		spec[key] = value
-	}
-	return spec
+	return b.config.FlatMapstructure().HCL2Spec()
 }
 
 // Prepare decodes and validates the builder configuration.

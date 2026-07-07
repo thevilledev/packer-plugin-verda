@@ -10,6 +10,7 @@
 packer-plugin-verda
 packer-plugin-verda.exe
 dist/
+.tools/
 
 # Test binary, built with `go test -c`
 *.test

@@ -8,13 +8,12 @@ packer {
 }
 
 source "verda-instance" "ubuntu" {
-  instance_type = "V100"
+  instance_type = "1L40S.20V"
+  location_code = "FIN-02"
   image         = "ubuntu-24.04"
   hostname      = "packer-verda-example"
 
   ssh_username = "root"
-
-  keep_instance = true
 }
 
 build {

@@ -34,6 +34,9 @@ jobs:
         run: |
           test -z "$(gofmt -l .)"
 
+      - name: Verify generated code
+        run: make check-generate
+
       - name: Test
         run: go test -race ./...
 
