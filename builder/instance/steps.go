@@ -284,19 +284,63 @@ func (s *stepCreateOSVolumeArtifact) Run(ctx context.Context, state multistep.St
 		}
 
 		locations := artifactVolumeLocations(s.Config, current.Location)
+		sourceLocation := firstNonEmpty(sourceVolume.Location, current.Location, s.Config.LocationCode, defaultLocationCode)
+		sourceType := firstNonEmpty(sourceVolume.Type, verda.VolumeTypeNVMe)
+		seedName := artifactVolumeSeedName(
+			name,
+			sourceLocation,
+			artifactVolumeLocationRequested(locations, sourceLocation),
+			len(locations) > 1,
+		)
+		ui.Say(fmt.Sprintf("Cloning Verda OS volume for artifact seed in %s...", sourceLocation))
+		seedID, err := client.CloneVolume(ctx, current.OSVolumeID, volumeCloneRequest{
+			Name:         seedName,
+			LocationCode: sourceLocation,
+			Type:         sourceType,
+		})
+		if err != nil {
+			state.Put("error", fmt.Errorf("cloning OS volume %s to %s: %w", current.OSVolumeID, sourceLocation, err))
+			return multistep.ActionHalt
+		}
+		rememberCreatedArtifactVolume(state, seedID)
+		seed := volumeReplicaState{
+			ID:       seedID,
+			Name:     seedName,
+			Location: sourceLocation,
+			Cloned:   true,
+		}
+		ui.Say(fmt.Sprintf("Created OS volume artifact seed %s in %s", seedID, sourceLocation))
+		sdkVolume, err := waitForVolumeReady(ctx, client, seedID, s.Config)
+		if err != nil {
+			state.Put("error", err)
+			return multistep.ActionHalt
+		}
+		seed.Name = firstNonEmpty(sdkVolume.Name, seed.Name)
+		seed.Location = firstNonEmpty(sdkVolume.Location, seed.Location)
+		seed.Status = sdkVolume.Status
+
 		replicas := make([]volumeReplicaState, 0, len(locations))
+		seedIsArtifact := false
 		for _, location := range locations {
 			cloneName := artifactVolumeName(name, location, len(locations) > 1)
+			if strings.EqualFold(location, sourceLocation) {
+				seed.Name = firstNonEmpty(seed.Name, cloneName)
+				replicas = append(replicas, seed)
+				seedIsArtifact = true
+				continue
+			}
+
 			ui.Say(fmt.Sprintf("Cloning Verda OS volume for artifact in %s...", location))
-			clonedID, err := client.CloneVolume(ctx, current.OSVolumeID, volumeCloneRequest{
+			clonedID, err := client.CloneVolume(ctx, seed.ID, volumeCloneRequest{
 				Name:         cloneName,
 				LocationCode: location,
-				Type:         firstNonEmpty(sourceVolume.Type, verda.VolumeTypeNVMe),
+				Type:         sourceType,
 			})
 			if err != nil {
-				state.Put("error", fmt.Errorf("cloning OS volume %s to %s: %w", current.OSVolumeID, location, err))
+				state.Put("error", fmt.Errorf("cloning OS volume %s to %s: %w", seed.ID, location, err))
 				return multistep.ActionHalt
 			}
+			rememberCreatedArtifactVolume(state, clonedID)
 			replicas = append(replicas, volumeReplicaState{
 				ID:       clonedID,
 				Name:     cloneName,
@@ -307,6 +351,9 @@ func (s *stepCreateOSVolumeArtifact) Run(ctx context.Context, state multistep.St
 		}
 
 		for i := range replicas {
+			if replicas[i].ID == seed.ID {
+				continue
+			}
 			sdkVolume, err := waitForVolumeReady(ctx, client, replicas[i].ID, s.Config)
 			if err != nil {
 				state.Put("error", err)
@@ -315,6 +362,15 @@ func (s *stepCreateOSVolumeArtifact) Run(ctx context.Context, state multistep.St
 			replicas[i].Name = firstNonEmpty(sdkVolume.Name, replicas[i].Name)
 			replicas[i].Location = firstNonEmpty(sdkVolume.Location, replicas[i].Location)
 			replicas[i].Status = sdkVolume.Status
+		}
+
+		if !seedIsArtifact {
+			ui.Say(fmt.Sprintf("Deleting temporary Verda OS volume artifact seed %s...", seed.ID))
+			if err := client.DeleteVolume(ctx, seed.ID, s.Config.DeletePermanently); err != nil {
+				state.Put("error", fmt.Errorf("deleting temporary OS volume artifact seed %s: %w", seed.ID, err))
+				return multistep.ActionHalt
+			}
+			forgetCreatedArtifactVolume(state, seed.ID)
 		}
 
 		volume.ID = replicas[0].ID
@@ -343,7 +399,47 @@ func (s *stepCreateOSVolumeArtifact) Run(ctx context.Context, state multistep.St
 	return multistep.ActionContinue
 }
 
-func (s *stepCreateOSVolumeArtifact) Cleanup(multistep.StateBag) {}
+func (s *stepCreateOSVolumeArtifact) Cleanup(state multistep.StateBag) {
+	if s.Config.ArtifactType != artifactTypeOSVolume || !s.Config.shouldCloneOSVolume() {
+		return
+	}
+	if _, ok := volumeArtifactFromState(state); ok {
+		return
+	}
+
+	ids, _ := state.Get(stateKeyCreatedArtifactVolumeIDs).([]string)
+	if len(ids) == 0 {
+		return
+	}
+	client := getClient(state)
+	if client == nil {
+		return
+	}
+
+	ui := state.Get("ui").(packer.Ui)
+	for _, id := range ids {
+		ui.Say(fmt.Sprintf("Deleting partial Verda OS volume artifact %s...", id))
+		if err := client.DeleteVolume(context.Background(), id, s.Config.DeletePermanently); err != nil {
+			ui.Error(fmt.Sprintf("Error deleting partial OS volume artifact %s: %s", id, err))
+		}
+	}
+}
+
+func rememberCreatedArtifactVolume(state multistep.StateBag, id string) {
+	ids, _ := state.Get(stateKeyCreatedArtifactVolumeIDs).([]string)
+	state.Put(stateKeyCreatedArtifactVolumeIDs, append(ids, id))
+}
+
+func forgetCreatedArtifactVolume(state multistep.StateBag, id string) {
+	ids, _ := state.Get(stateKeyCreatedArtifactVolumeIDs).([]string)
+	filtered := ids[:0]
+	for _, candidate := range ids {
+		if candidate != id {
+			filtered = append(filtered, candidate)
+		}
+	}
+	state.Put(stateKeyCreatedArtifactVolumeIDs, filtered)
+}
 
 func shouldPreserveSourceOSVolume(config *Config, state multistep.StateBag, current instanceState) bool {
 	if config.ArtifactType != artifactTypeOSVolume || config.shouldCloneOSVolume() {
@@ -368,6 +464,22 @@ func artifactVolumeName(baseName, location string, multiLocation bool) string {
 		return baseName
 	}
 	return fmt.Sprintf("%s-%s", baseName, strings.ToLower(location))
+}
+
+func artifactVolumeSeedName(baseName, sourceLocation string, seedIsArtifact, multiLocation bool) string {
+	if seedIsArtifact {
+		return artifactVolumeName(baseName, sourceLocation, multiLocation)
+	}
+	return fmt.Sprintf("%s-%s-seed", baseName, strings.ToLower(sourceLocation))
+}
+
+func artifactVolumeLocationRequested(locations []string, location string) bool {
+	for _, candidate := range locations {
+		if strings.EqualFold(candidate, location) {
+			return true
+		}
+	}
+	return false
 }
 
 func waitForInstanceStatuses(ctx context.Context, client verdaClient, id string, config *Config, statuses ...string) (*verda.Instance, error) {

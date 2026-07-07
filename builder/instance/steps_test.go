@@ -23,9 +23,11 @@ type fakeClient struct {
 	shutdownInstanceID   string
 	getVolumeCallCount   int
 	cloneVolumeSourceID  string
+	cloneVolumeSourceIDs []string
 	cloneVolumeReq       *volumeCloneRequest
 	cloneVolumeReqs      []volumeCloneRequest
 	cloneVolumeIDs       []string
+	cloneVolumeErrs      []error
 	deleteVolumeID       string
 	deleteVolumeForce    bool
 	deleteVolumeCallIDs  []string
@@ -95,10 +97,19 @@ func (f *fakeClient) GetVolume(_ context.Context, id string) (*verda.Volume, err
 
 func (f *fakeClient) CloneVolume(_ context.Context, id string, req volumeCloneRequest) (string, error) {
 	f.cloneVolumeSourceID = id
+	f.cloneVolumeSourceIDs = append(f.cloneVolumeSourceIDs, id)
 	f.cloneVolumeReq = &req
 	f.cloneVolumeReqs = append(f.cloneVolumeReqs, req)
+	idx := len(f.cloneVolumeReqs) - 1
+	if len(f.cloneVolumeErrs) > 0 {
+		if idx >= len(f.cloneVolumeErrs) {
+			idx = len(f.cloneVolumeErrs) - 1
+		}
+		if err := f.cloneVolumeErrs[idx]; err != nil {
+			return "", err
+		}
+	}
 	if len(f.cloneVolumeIDs) > 0 {
-		idx := len(f.cloneVolumeReqs) - 1
 		if idx >= len(f.cloneVolumeIDs) {
 			idx = len(f.cloneVolumeIDs) - 1
 		}
@@ -298,6 +309,11 @@ func TestStepCreateOSVolumeArtifactClonesToMultipleLocations(t *testing.T) {
 	if len(client.cloneVolumeReqs) != 2 {
 		t.Fatalf("cloneVolumeReqs = %#v", client.cloneVolumeReqs)
 	}
+	if len(client.cloneVolumeSourceIDs) != 2 ||
+		client.cloneVolumeSourceIDs[0] != osVolumeID ||
+		client.cloneVolumeSourceIDs[1] != "vol-fin-01" {
+		t.Fatalf("cloneVolumeSourceIDs = %#v", client.cloneVolumeSourceIDs)
+	}
 	if client.cloneVolumeReqs[0].Name != "artifact-volume-fin-01" ||
 		client.cloneVolumeReqs[0].LocationCode != "FIN-01" ||
 		client.cloneVolumeReqs[1].Name != "artifact-volume-fin-03" ||
@@ -320,6 +336,106 @@ func TestStepCreateOSVolumeArtifactClonesToMultipleLocations(t *testing.T) {
 	idsByLocation := generated["VolumeIDsByLocation"].(map[string]string)
 	if idsByLocation["FIN-01"] != "vol-fin-01" || idsByLocation["FIN-03"] != "vol-fin-03" {
 		t.Fatalf("VolumeIDsByLocation = %#v", idsByLocation)
+	}
+}
+
+func TestStepCreateOSVolumeArtifactUsesTemporarySourceLocationSeed(t *testing.T) {
+	clone := true
+	ip := "203.0.113.10"
+	osVolumeID := "vol-os"
+	client := &fakeClient{
+		cloneVolumeIDs: []string{"vol-seed-fin-03", "vol-fin-01", "vol-fin-02"},
+		instances: []*verda.Instance{
+			{ID: "inst-1", Status: verda.StatusOffline, IP: &ip, OSVolumeID: &osVolumeID},
+		},
+		volumes: []*verda.Volume{
+			{ID: "vol-os", Name: "source-volume", Type: verda.VolumeTypeNVMe, Status: verda.VolumeStatusAttached, Location: "FIN-03"},
+			{ID: "vol-seed-fin-03", Name: "artifact-volume-fin-03-seed", Status: verda.VolumeStatusDetached, Location: "FIN-03"},
+			{ID: "vol-fin-01", Name: "artifact-volume-fin-01", Status: verda.VolumeStatusDetached, Location: "FIN-01"},
+			{ID: "vol-fin-02", Name: "artifact-volume-fin-02", Status: verda.VolumeStatusDetached, Location: "FIN-02"},
+		},
+	}
+	state := testState(client)
+	state.Put(stateKeyInstance, instanceState{ID: "inst-1", IP: ip, Status: verda.StatusRunning, Location: "FIN-03", OSVolumeID: osVolumeID})
+
+	step := &stepCreateOSVolumeArtifact{
+		Config: &Config{
+			ArtifactType:                artifactTypeOSVolume,
+			CloneOSVolume:               &clone,
+			ArtifactVolumeName:          "artifact-volume",
+			ArtifactVolumeLocationCodes: []string{"FIN-01", "FIN-02"},
+			PollInterval:                time.Millisecond,
+			InstanceTimeout:             time.Second,
+		},
+	}
+	if action := step.Run(context.Background(), state); action != multistep.ActionContinue {
+		t.Fatalf("action = %v, err = %v", action, state.Get("error"))
+	}
+	if len(client.cloneVolumeSourceIDs) != 3 ||
+		client.cloneVolumeSourceIDs[0] != osVolumeID ||
+		client.cloneVolumeSourceIDs[1] != "vol-seed-fin-03" ||
+		client.cloneVolumeSourceIDs[2] != "vol-seed-fin-03" {
+		t.Fatalf("cloneVolumeSourceIDs = %#v", client.cloneVolumeSourceIDs)
+	}
+	if client.cloneVolumeReqs[0].Name != "artifact-volume-fin-03-seed" ||
+		client.cloneVolumeReqs[0].LocationCode != "FIN-03" ||
+		client.cloneVolumeReqs[1].LocationCode != "FIN-01" ||
+		client.cloneVolumeReqs[2].LocationCode != "FIN-02" {
+		t.Fatalf("cloneVolumeReqs = %#v", client.cloneVolumeReqs)
+	}
+	if len(client.deleteVolumeCallIDs) != 1 || client.deleteVolumeCallIDs[0] != "vol-seed-fin-03" {
+		t.Fatalf("deleted volumes = %#v", client.deleteVolumeCallIDs)
+	}
+
+	volume, ok := volumeArtifactFromState(state)
+	if !ok {
+		t.Fatal("expected volume artifact state")
+	}
+	if volume.ID != "vol-fin-01" || volume.Location != "FIN-01" {
+		t.Fatalf("volume artifact = %#v", volume)
+	}
+	if len(volume.Replicas) != 2 ||
+		volume.Replicas[0].ID != "vol-fin-01" ||
+		volume.Replicas[1].ID != "vol-fin-02" {
+		t.Fatalf("volume replicas = %#v", volume.Replicas)
+	}
+}
+
+func TestStepCreateOSVolumeArtifactCleanupDeletesPartialClones(t *testing.T) {
+	clone := true
+	ip := "203.0.113.10"
+	osVolumeID := "vol-os"
+	client := &fakeClient{
+		cloneVolumeIDs:  []string{"vol-fin-01"},
+		cloneVolumeErrs: []error{nil, errors.New("cross-location clone failed")},
+		instances: []*verda.Instance{
+			{ID: "inst-1", Status: verda.StatusOffline, IP: &ip, OSVolumeID: &osVolumeID},
+		},
+		volumes: []*verda.Volume{
+			{ID: "vol-os", Name: "source-volume", Type: verda.VolumeTypeNVMe, Status: verda.VolumeStatusAttached, Location: "FIN-01"},
+			{ID: "vol-fin-01", Name: "artifact-volume-fin-01", Status: verda.VolumeStatusDetached, Location: "FIN-01"},
+		},
+	}
+	state := testState(client)
+	state.Put(stateKeyInstance, instanceState{ID: "inst-1", IP: ip, Status: verda.StatusRunning, Location: "FIN-01", OSVolumeID: osVolumeID})
+
+	step := &stepCreateOSVolumeArtifact{
+		Config: &Config{
+			ArtifactType:                artifactTypeOSVolume,
+			CloneOSVolume:               &clone,
+			ArtifactVolumeName:          "artifact-volume",
+			ArtifactVolumeLocationCodes: []string{"FIN-01", "FIN-03"},
+			PollInterval:                time.Millisecond,
+			InstanceTimeout:             time.Second,
+		},
+	}
+	if action := step.Run(context.Background(), state); action != multistep.ActionHalt {
+		t.Fatalf("action = %v, err = %v", action, state.Get("error"))
+	}
+
+	step.Cleanup(state)
+	if len(client.deleteVolumeCallIDs) != 1 || client.deleteVolumeCallIDs[0] != "vol-fin-01" {
+		t.Fatalf("deleted volumes = %#v", client.deleteVolumeCallIDs)
 	}
 }
 

@@ -6,12 +6,13 @@ import (
 )
 
 const (
-	stateKeyClient          = "verda_client"
-	stateKeyCreatedSSHKeyID = "verda_created_ssh_key_id"
-	stateKeyCreatedScriptID = "verda_created_startup_script_id"
-	stateKeyInstance        = "verda_instance"
-	stateKeyInstanceIP      = "verda_instance_ip"
-	stateKeyArtifactVolume  = "verda_artifact_volume"
+	stateKeyClient                   = "verda_client"
+	stateKeyCreatedSSHKeyID          = "verda_created_ssh_key_id"
+	stateKeyCreatedScriptID          = "verda_created_startup_script_id"
+	stateKeyCreatedArtifactVolumeIDs = "verda_created_artifact_volume_ids"
+	stateKeyInstance                 = "verda_instance"
+	stateKeyInstanceIP               = "verda_instance_ip"
+	stateKeyArtifactVolume           = "verda_artifact_volume"
 )
 
 type instanceState struct {
