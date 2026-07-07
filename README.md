@@ -3,7 +3,7 @@
 > [!NOTE]
 > This is an unofficial implementation. Probably not production ready yet.
 
-`packer-plugin-verda` provides a Packer builder for Verda Cloud.
+`packer-plugin-verda` provides a Packer builder for [Verda Cloud](https://verda.com).
 
 The `verda-instance` builder creates a Verda instance, waits for it to become reachable, runs provisioners, and returns either the created instance or a cloned OS volume artifact.
 
@@ -91,16 +91,6 @@ Build the GitHub Pages site input with:
 
 ```sh
 make docs-site
-```
-
-## Release
-
-Packer remote plugin installation expects GitHub release assets named with the plugin API version and a SHA256SUMS file.
-
-```sh
-make snapshot
-git tag -a v0.1.0 -m v0.1.0
-git push origin v0.1.0
 ```
 
 ## License
