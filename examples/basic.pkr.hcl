@@ -2,7 +2,7 @@ packer {
   required_plugins {
     verda = {
       version = ">= 0.0.1"
-      source  = "github.com/verda-cloud/verda"
+      source  = "github.com/thevilledev/verda"
     }
   }
 }
