@@ -15,14 +15,13 @@ variable "os_volume_id" {
 }
 
 resource "verda_instance" "app" {
-  instance_type = "1B200.30V"
+  instance_type = "CPU.4V.16G"
   image         = var.os_volume_id
   hostname      = "app-from-packer-volume"
   description   = "Instance created from a Packer-built Verda OS volume"
-  location      = "FIN-03"
-  ssh_key_ids   = []
+  location      = "FIN-02"
 
   # Verda does not inject ssh_key_ids when booting from an existing OS volume.
-  # Keep this empty and bake /root/.ssh/authorized_keys into the volume during
-  # the Packer build.
+  # Keep this empty and bake keys into the volume during the Packer build.
+  ssh_key_ids   = []
 }
