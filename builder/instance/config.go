@@ -1,3 +1,4 @@
+//go:generate packer-sdc struct-markdown
 //go:generate packer-sdc mapstructure-to-hcl2 -type Config,Volume
 
 package instance
@@ -33,57 +34,100 @@ type Config struct {
 	Comm                communicator.Config `mapstructure:",squash"`
 	ctx                 interpolate.Context
 
-	ClientID     string `mapstructure:"client_id"`
-	ClientSecret string `mapstructure:"client_secret"`
-	BaseURL      string `mapstructure:"base_url"`
-	Debug        bool   `mapstructure:"debug"`
+	// Verda client ID. It can also be set with VERDA_CLIENT_ID.
+	ClientID string `mapstructure:"client_id" required:"true"`
+	// Verda client secret. It can also be set with VERDA_CLIENT_SECRET.
+	ClientSecret string `mapstructure:"client_secret" required:"true"`
+	// Verda API base URL. Leave unset for the production API.
+	BaseURL string `mapstructure:"base_url" required:"false"`
+	// Enable verbose Verda SDK logging.
+	Debug bool `mapstructure:"debug" required:"false"`
 
-	InstanceType string `mapstructure:"instance_type"`
-	Image        string `mapstructure:"image"`
-	Hostname     string `mapstructure:"hostname"`
-	Description  string `mapstructure:"description"`
-	LocationCode string `mapstructure:"location_code"`
-	Contract     string `mapstructure:"contract"`
-	Pricing      string `mapstructure:"pricing"`
-	IsSpot       bool   `mapstructure:"is_spot"`
-	Coupon       string `mapstructure:"coupon"`
+	// Verda instance type to create.
+	InstanceType string `mapstructure:"instance_type" required:"true"`
+	// Image name, image ID, or OS volume ID to boot from.
+	Image string `mapstructure:"image" required:"true"`
+	// Hostname for the created instance.
+	Hostname string `mapstructure:"hostname" required:"true"`
+	// Description for the created instance. Defaults to a Packer build description based on the hostname.
+	Description string `mapstructure:"description" required:"false"`
+	// Verda location code for the instance. Defaults to FIN-03.
+	LocationCode string `mapstructure:"location_code" required:"false"`
+	// Instance contract. Defaults to PAY_AS_YOU_GO, or SPOT when is_spot is true.
+	Contract string `mapstructure:"contract" required:"false"`
+	// Optional pricing value passed to the Verda API.
+	Pricing string `mapstructure:"pricing" required:"false"`
+	// Request a spot instance. When true, the default contract is SPOT.
+	IsSpot bool `mapstructure:"is_spot" required:"false"`
+	// Optional coupon value passed to the Verda API.
+	Coupon string `mapstructure:"coupon" required:"false"`
 
-	SSHKeyIDs            []string `mapstructure:"ssh_key_ids"`
-	TemporarySSHKeyName  string   `mapstructure:"temporary_ssh_key_name"`
-	SkipTemporarySSHKey  bool     `mapstructure:"skip_temporary_ssh_key"`
-	StartupScriptID      string   `mapstructure:"startup_script_id"`
-	StartupScript        string   `mapstructure:"startup_script"`
-	StartupScriptName    string   `mapstructure:"startup_script_name"`
-	DeleteStartupScript  bool     `mapstructure:"delete_startup_script"`
-	ExistingVolumeIDs    []string `mapstructure:"existing_volume_ids"`
-	OSVolumeName         string   `mapstructure:"os_volume_name"`
-	OSVolumeSize         int      `mapstructure:"os_volume_size"`
-	OSVolumeSpotBehavior string   `mapstructure:"os_volume_spot_behavior"`
-	Volumes              []Volume `mapstructure:"volume"`
+	// Existing Verda SSH key IDs to add to the instance.
+	SSHKeyIDs []string `mapstructure:"ssh_key_ids" required:"false"`
+	// Name for the temporary Verda SSH key created from Packer's generated public key.
+	TemporarySSHKeyName string `mapstructure:"temporary_ssh_key_name" required:"false"`
+	// Disable temporary Verda SSH key creation. When true with SSH, provide ssh_key_ids and a matching SSH credential.
+	SkipTemporarySSHKey bool `mapstructure:"skip_temporary_ssh_key" required:"false"`
+	// Existing Verda startup script ID to attach to the instance.
+	StartupScriptID string `mapstructure:"startup_script_id" required:"false"`
+	// Startup script content to create before launching the instance.
+	StartupScript string `mapstructure:"startup_script" required:"false"`
+	// Name for a startup script created from startup_script.
+	StartupScriptName string `mapstructure:"startup_script_name" required:"false"`
+	// Delete a startup script created from startup_script during cleanup.
+	DeleteStartupScript bool `mapstructure:"delete_startup_script" required:"false"`
+	// Existing non-OS volume IDs to attach to the instance.
+	ExistingVolumeIDs []string `mapstructure:"existing_volume_ids" required:"false"`
+	// Name for the instance OS volume.
+	OSVolumeName string `mapstructure:"os_volume_name" required:"false"`
+	// Size, in GiB, for the instance OS volume.
+	OSVolumeSize int `mapstructure:"os_volume_size" required:"false"`
+	// Spot discontinuation behavior for the instance OS volume.
+	OSVolumeSpotBehavior string `mapstructure:"os_volume_spot_behavior" required:"false"`
+	// Additional data volumes to create with the instance.
+	Volumes []Volume `mapstructure:"volume" required:"false"`
 
-	ArtifactType                string   `mapstructure:"artifact_type"`
-	CloneOSVolume               *bool    `mapstructure:"clone_os_volume"`
-	ArtifactVolumeName          string   `mapstructure:"artifact_volume_name"`
-	ArtifactVolumeLocationCode  string   `mapstructure:"artifact_volume_location_code"`
-	ArtifactVolumeLocationCodes []string `mapstructure:"artifact_volume_location_codes"`
-	SkipShutdownBeforeArtifact  bool     `mapstructure:"skip_shutdown_before_artifact"`
+	// Artifact to return from the build. Valid values are instance and os_volume. Defaults to instance.
+	ArtifactType string `mapstructure:"artifact_type" required:"false"`
+	// Clone the source OS volume when artifact_type is os_volume. Defaults to true.
+	CloneOSVolume *bool `mapstructure:"clone_os_volume" required:"false"`
+	// Name for the cloned OS volume artifact.
+	ArtifactVolumeName string `mapstructure:"artifact_volume_name" required:"false"`
+	// Location for a single cloned OS volume artifact. Defaults to location_code.
+	ArtifactVolumeLocationCode string `mapstructure:"artifact_volume_location_code" required:"false"`
+	// Locations for cloned OS volume artifacts. The first location becomes the primary artifact ID.
+	ArtifactVolumeLocationCodes []string `mapstructure:"artifact_volume_location_codes" required:"false"`
+	// Skip shutting down the instance before creating an OS volume artifact.
+	SkipShutdownBeforeArtifact bool `mapstructure:"skip_shutdown_before_artifact" required:"false"`
 
-	KeepInstance       bool          `mapstructure:"keep_instance"`
-	DeletePermanently  bool          `mapstructure:"delete_permanently"`
-	VolumeIDsToDelete  []string      `mapstructure:"volume_ids_to_delete"`
-	PollInterval       time.Duration `mapstructure:"poll_interval"`
-	InstanceTimeout    time.Duration `mapstructure:"instance_timeout"`
-	APITimeout         time.Duration `mapstructure:"api_timeout"`
-	AllowedSSHStatuses []string      `mapstructure:"allowed_ssh_statuses"`
+	// Keep the created instance after the build. By default the instance is deleted during cleanup.
+	KeepInstance bool `mapstructure:"keep_instance" required:"false"`
+	// Permanently delete resources during cleanup instead of moving them to a recoverable state.
+	DeletePermanently bool `mapstructure:"delete_permanently" required:"false"`
+	// Volume IDs to delete when the instance is deleted.
+	VolumeIDsToDelete []string `mapstructure:"volume_ids_to_delete" required:"false"`
+	// Interval between Verda instance status checks. Defaults to 15s.
+	PollInterval time.Duration `mapstructure:"poll_interval" required:"false"`
+	// Timeout for the instance to become reachable. Defaults to 30m.
+	InstanceTimeout time.Duration `mapstructure:"instance_timeout" required:"false"`
+	// HTTP client timeout for Verda API calls. Defaults to 10m.
+	APITimeout time.Duration `mapstructure:"api_timeout" required:"false"`
+	// Instance statuses that are acceptable for SSH connection attempts. Defaults to running.
+	AllowedSSHStatuses []string `mapstructure:"allowed_ssh_statuses" required:"false"`
 }
 
 // Volume describes an additional data volume to create with the instance.
 type Volume struct {
-	Name              string `mapstructure:"name"`
-	Size              int    `mapstructure:"size"`
-	Type              string `mapstructure:"type"`
-	LocationCode      string `mapstructure:"location_code"`
-	OnSpotDiscontinue string `mapstructure:"on_spot_discontinue"`
+	// Name for the additional volume.
+	Name string `mapstructure:"name" required:"true"`
+	// Size, in GiB, for the additional volume.
+	Size int `mapstructure:"size" required:"true"`
+	// Volume type.
+	Type string `mapstructure:"type" required:"true"`
+	// Verda location code for the additional volume. Defaults to the instance location when unset.
+	LocationCode string `mapstructure:"location_code" required:"false"`
+	// Spot discontinuation behavior for the additional volume.
+	OnSpotDiscontinue string `mapstructure:"on_spot_discontinue" required:"false"`
 }
 
 // Prepare decodes and validates builder configuration.

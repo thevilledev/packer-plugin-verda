@@ -1,0 +1,9 @@
+title: Packer Plugin Verda
+description: Packer builder for Verda Cloud.
+permalink: pretty
+
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default

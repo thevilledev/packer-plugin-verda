@@ -6,8 +6,10 @@ PLUGIN_SOURCE := github.com/thevilledev/verda
 HASHICORP_PACKER_PLUGIN_SDK_VERSION ?= $(shell go list -m github.com/hashicorp/packer-plugin-sdk | cut -d " " -f2)
 TOOLS_BIN := $(CURDIR)/.tools/bin
 PACKER_SDC_STAMP := $(TOOLS_BIN)/.packer-sdc-$(HASHICORP_PACKER_PLUGIN_SDK_VERSION)
+DOCS_RENDER_DIR ?= .docs
+DOCS_SITE_DIR ?= .site
 
-.PHONY: build dev test lint fmt tidy install-packer-sdc generate check-generate plugin-check snapshot release clean
+.PHONY: build dev test lint fmt tidy install-packer-sdc generate renderdocs docs-site check-generate plugin-check snapshot release clean
 
 build:
 	go build -trimpath -ldflags="-X $(VERSION_PKG).Version=$(VERSION)" -o $(PLUGIN_NAME) .
@@ -35,6 +37,16 @@ install-packer-sdc: $(PACKER_SDC_STAMP)
 
 generate: install-packer-sdc
 	PATH="$(TOOLS_BIN):$$PATH" go generate ./...
+
+renderdocs: generate
+	rm -rf "$(DOCS_RENDER_DIR)"
+	PATH="$(TOOLS_BIN):$$PATH" packer-sdc renderdocs -src docs -partials docs-partials/ -dst "$(DOCS_RENDER_DIR)/"
+
+docs-site: renderdocs
+	rm -rf "$(DOCS_SITE_DIR)"
+	mkdir -p "$(DOCS_SITE_DIR)"
+	cp -R "$(DOCS_RENDER_DIR)/." "$(DOCS_SITE_DIR)/"
+	find "$(DOCS_SITE_DIR)" -name '*.mdx' -exec sh -c 'mv "$$1" "$${1%.mdx}.md"' _ {} \;
 
 check-generate: generate
 	git diff --exit-code

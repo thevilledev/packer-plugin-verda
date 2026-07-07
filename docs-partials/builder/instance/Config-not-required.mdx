@@ -1,0 +1,69 @@
+<!-- Code generated from the comments of the Config struct in builder/instance/config.go; DO NOT EDIT MANUALLY -->
+
+- `base_url` (string) - Verda API base URL. Leave unset for the production API.
+
+- `debug` (bool) - Enable verbose Verda SDK logging.
+
+- `description` (string) - Description for the created instance. Defaults to a Packer build description based on the hostname.
+
+- `location_code` (string) - Verda location code for the instance. Defaults to FIN-03.
+
+- `contract` (string) - Instance contract. Defaults to PAY_AS_YOU_GO, or SPOT when is_spot is true.
+
+- `pricing` (string) - Optional pricing value passed to the Verda API.
+
+- `is_spot` (bool) - Request a spot instance. When true, the default contract is SPOT.
+
+- `coupon` (string) - Optional coupon value passed to the Verda API.
+
+- `ssh_key_ids` ([]string) - Existing Verda SSH key IDs to add to the instance.
+
+- `temporary_ssh_key_name` (string) - Name for the temporary Verda SSH key created from Packer's generated public key.
+
+- `skip_temporary_ssh_key` (bool) - Disable temporary Verda SSH key creation. When true with SSH, provide ssh_key_ids and a matching SSH credential.
+
+- `startup_script_id` (string) - Existing Verda startup script ID to attach to the instance.
+
+- `startup_script` (string) - Startup script content to create before launching the instance.
+
+- `startup_script_name` (string) - Name for a startup script created from startup_script.
+
+- `delete_startup_script` (bool) - Delete a startup script created from startup_script during cleanup.
+
+- `existing_volume_ids` ([]string) - Existing non-OS volume IDs to attach to the instance.
+
+- `os_volume_name` (string) - Name for the instance OS volume.
+
+- `os_volume_size` (int) - Size, in GiB, for the instance OS volume.
+
+- `os_volume_spot_behavior` (string) - Spot discontinuation behavior for the instance OS volume.
+
+- `volume` ([]Volume) - Additional data volumes to create with the instance.
+
+- `artifact_type` (string) - Artifact to return from the build. Valid values are instance and os_volume. Defaults to instance.
+
+- `clone_os_volume` (\*bool) - Clone the source OS volume when artifact_type is os_volume. Defaults to true.
+
+- `artifact_volume_name` (string) - Name for the cloned OS volume artifact.
+
+- `artifact_volume_location_code` (string) - Location for a single cloned OS volume artifact. Defaults to location_code.
+
+- `artifact_volume_location_codes` ([]string) - Locations for cloned OS volume artifacts. The first location becomes the primary artifact ID.
+
+- `skip_shutdown_before_artifact` (bool) - Skip shutting down the instance before creating an OS volume artifact.
+
+- `keep_instance` (bool) - Keep the created instance after the build. By default the instance is deleted during cleanup.
+
+- `delete_permanently` (bool) - Permanently delete resources during cleanup instead of moving them to a recoverable state.
+
+- `volume_ids_to_delete` ([]string) - Volume IDs to delete when the instance is deleted.
+
+- `poll_interval` (duration string | ex: "1h5m2s") - Interval between Verda instance status checks. Defaults to 15s.
+
+- `instance_timeout` (duration string | ex: "1h5m2s") - Timeout for the instance to become reachable. Defaults to 30m.
+
+- `api_timeout` (duration string | ex: "1h5m2s") - HTTP client timeout for Verda API calls. Defaults to 10m.
+
+- `allowed_ssh_statuses` ([]string) - Instance statuses that are acceptable for SSH connection attempts. Defaults to running.
+
+<!-- End of code generated from the comments of the Config struct in builder/instance/config.go; -->

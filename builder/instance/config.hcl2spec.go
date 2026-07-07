@@ -67,44 +67,44 @@ type FlatConfig struct {
 	WinRMUseSSL                 *bool             `mapstructure:"winrm_use_ssl" cty:"winrm_use_ssl" hcl:"winrm_use_ssl"`
 	WinRMInsecure               *bool             `mapstructure:"winrm_insecure" cty:"winrm_insecure" hcl:"winrm_insecure"`
 	WinRMUseNTLM                *bool             `mapstructure:"winrm_use_ntlm" cty:"winrm_use_ntlm" hcl:"winrm_use_ntlm"`
-	ClientID                    *string           `mapstructure:"client_id" cty:"client_id" hcl:"client_id"`
-	ClientSecret                *string           `mapstructure:"client_secret" cty:"client_secret" hcl:"client_secret"`
-	BaseURL                     *string           `mapstructure:"base_url" cty:"base_url" hcl:"base_url"`
-	Debug                       *bool             `mapstructure:"debug" cty:"debug" hcl:"debug"`
-	InstanceType                *string           `mapstructure:"instance_type" cty:"instance_type" hcl:"instance_type"`
-	Image                       *string           `mapstructure:"image" cty:"image" hcl:"image"`
-	Hostname                    *string           `mapstructure:"hostname" cty:"hostname" hcl:"hostname"`
-	Description                 *string           `mapstructure:"description" cty:"description" hcl:"description"`
-	LocationCode                *string           `mapstructure:"location_code" cty:"location_code" hcl:"location_code"`
-	Contract                    *string           `mapstructure:"contract" cty:"contract" hcl:"contract"`
-	Pricing                     *string           `mapstructure:"pricing" cty:"pricing" hcl:"pricing"`
-	IsSpot                      *bool             `mapstructure:"is_spot" cty:"is_spot" hcl:"is_spot"`
-	Coupon                      *string           `mapstructure:"coupon" cty:"coupon" hcl:"coupon"`
-	SSHKeyIDs                   []string          `mapstructure:"ssh_key_ids" cty:"ssh_key_ids" hcl:"ssh_key_ids"`
-	TemporarySSHKeyName         *string           `mapstructure:"temporary_ssh_key_name" cty:"temporary_ssh_key_name" hcl:"temporary_ssh_key_name"`
-	SkipTemporarySSHKey         *bool             `mapstructure:"skip_temporary_ssh_key" cty:"skip_temporary_ssh_key" hcl:"skip_temporary_ssh_key"`
-	StartupScriptID             *string           `mapstructure:"startup_script_id" cty:"startup_script_id" hcl:"startup_script_id"`
-	StartupScript               *string           `mapstructure:"startup_script" cty:"startup_script" hcl:"startup_script"`
-	StartupScriptName           *string           `mapstructure:"startup_script_name" cty:"startup_script_name" hcl:"startup_script_name"`
-	DeleteStartupScript         *bool             `mapstructure:"delete_startup_script" cty:"delete_startup_script" hcl:"delete_startup_script"`
-	ExistingVolumeIDs           []string          `mapstructure:"existing_volume_ids" cty:"existing_volume_ids" hcl:"existing_volume_ids"`
-	OSVolumeName                *string           `mapstructure:"os_volume_name" cty:"os_volume_name" hcl:"os_volume_name"`
-	OSVolumeSize                *int              `mapstructure:"os_volume_size" cty:"os_volume_size" hcl:"os_volume_size"`
-	OSVolumeSpotBehavior        *string           `mapstructure:"os_volume_spot_behavior" cty:"os_volume_spot_behavior" hcl:"os_volume_spot_behavior"`
-	Volumes                     []FlatVolume      `mapstructure:"volume" cty:"volume" hcl:"volume"`
-	ArtifactType                *string           `mapstructure:"artifact_type" cty:"artifact_type" hcl:"artifact_type"`
-	CloneOSVolume               *bool             `mapstructure:"clone_os_volume" cty:"clone_os_volume" hcl:"clone_os_volume"`
-	ArtifactVolumeName          *string           `mapstructure:"artifact_volume_name" cty:"artifact_volume_name" hcl:"artifact_volume_name"`
-	ArtifactVolumeLocationCode  *string           `mapstructure:"artifact_volume_location_code" cty:"artifact_volume_location_code" hcl:"artifact_volume_location_code"`
-	ArtifactVolumeLocationCodes []string          `mapstructure:"artifact_volume_location_codes" cty:"artifact_volume_location_codes" hcl:"artifact_volume_location_codes"`
-	SkipShutdownBeforeArtifact  *bool             `mapstructure:"skip_shutdown_before_artifact" cty:"skip_shutdown_before_artifact" hcl:"skip_shutdown_before_artifact"`
-	KeepInstance                *bool             `mapstructure:"keep_instance" cty:"keep_instance" hcl:"keep_instance"`
-	DeletePermanently           *bool             `mapstructure:"delete_permanently" cty:"delete_permanently" hcl:"delete_permanently"`
-	VolumeIDsToDelete           []string          `mapstructure:"volume_ids_to_delete" cty:"volume_ids_to_delete" hcl:"volume_ids_to_delete"`
-	PollInterval                *string           `mapstructure:"poll_interval" cty:"poll_interval" hcl:"poll_interval"`
-	InstanceTimeout             *string           `mapstructure:"instance_timeout" cty:"instance_timeout" hcl:"instance_timeout"`
-	APITimeout                  *string           `mapstructure:"api_timeout" cty:"api_timeout" hcl:"api_timeout"`
-	AllowedSSHStatuses          []string          `mapstructure:"allowed_ssh_statuses" cty:"allowed_ssh_statuses" hcl:"allowed_ssh_statuses"`
+	ClientID                    *string           `mapstructure:"client_id" required:"true" cty:"client_id" hcl:"client_id"`
+	ClientSecret                *string           `mapstructure:"client_secret" required:"true" cty:"client_secret" hcl:"client_secret"`
+	BaseURL                     *string           `mapstructure:"base_url" required:"false" cty:"base_url" hcl:"base_url"`
+	Debug                       *bool             `mapstructure:"debug" required:"false" cty:"debug" hcl:"debug"`
+	InstanceType                *string           `mapstructure:"instance_type" required:"true" cty:"instance_type" hcl:"instance_type"`
+	Image                       *string           `mapstructure:"image" required:"true" cty:"image" hcl:"image"`
+	Hostname                    *string           `mapstructure:"hostname" required:"true" cty:"hostname" hcl:"hostname"`
+	Description                 *string           `mapstructure:"description" required:"false" cty:"description" hcl:"description"`
+	LocationCode                *string           `mapstructure:"location_code" required:"false" cty:"location_code" hcl:"location_code"`
+	Contract                    *string           `mapstructure:"contract" required:"false" cty:"contract" hcl:"contract"`
+	Pricing                     *string           `mapstructure:"pricing" required:"false" cty:"pricing" hcl:"pricing"`
+	IsSpot                      *bool             `mapstructure:"is_spot" required:"false" cty:"is_spot" hcl:"is_spot"`
+	Coupon                      *string           `mapstructure:"coupon" required:"false" cty:"coupon" hcl:"coupon"`
+	SSHKeyIDs                   []string          `mapstructure:"ssh_key_ids" required:"false" cty:"ssh_key_ids" hcl:"ssh_key_ids"`
+	TemporarySSHKeyName         *string           `mapstructure:"temporary_ssh_key_name" required:"false" cty:"temporary_ssh_key_name" hcl:"temporary_ssh_key_name"`
+	SkipTemporarySSHKey         *bool             `mapstructure:"skip_temporary_ssh_key" required:"false" cty:"skip_temporary_ssh_key" hcl:"skip_temporary_ssh_key"`
+	StartupScriptID             *string           `mapstructure:"startup_script_id" required:"false" cty:"startup_script_id" hcl:"startup_script_id"`
+	StartupScript               *string           `mapstructure:"startup_script" required:"false" cty:"startup_script" hcl:"startup_script"`
+	StartupScriptName           *string           `mapstructure:"startup_script_name" required:"false" cty:"startup_script_name" hcl:"startup_script_name"`
+	DeleteStartupScript         *bool             `mapstructure:"delete_startup_script" required:"false" cty:"delete_startup_script" hcl:"delete_startup_script"`
+	ExistingVolumeIDs           []string          `mapstructure:"existing_volume_ids" required:"false" cty:"existing_volume_ids" hcl:"existing_volume_ids"`
+	OSVolumeName                *string           `mapstructure:"os_volume_name" required:"false" cty:"os_volume_name" hcl:"os_volume_name"`
+	OSVolumeSize                *int              `mapstructure:"os_volume_size" required:"false" cty:"os_volume_size" hcl:"os_volume_size"`
+	OSVolumeSpotBehavior        *string           `mapstructure:"os_volume_spot_behavior" required:"false" cty:"os_volume_spot_behavior" hcl:"os_volume_spot_behavior"`
+	Volumes                     []FlatVolume      `mapstructure:"volume" required:"false" cty:"volume" hcl:"volume"`
+	ArtifactType                *string           `mapstructure:"artifact_type" required:"false" cty:"artifact_type" hcl:"artifact_type"`
+	CloneOSVolume               *bool             `mapstructure:"clone_os_volume" required:"false" cty:"clone_os_volume" hcl:"clone_os_volume"`
+	ArtifactVolumeName          *string           `mapstructure:"artifact_volume_name" required:"false" cty:"artifact_volume_name" hcl:"artifact_volume_name"`
+	ArtifactVolumeLocationCode  *string           `mapstructure:"artifact_volume_location_code" required:"false" cty:"artifact_volume_location_code" hcl:"artifact_volume_location_code"`
+	ArtifactVolumeLocationCodes []string          `mapstructure:"artifact_volume_location_codes" required:"false" cty:"artifact_volume_location_codes" hcl:"artifact_volume_location_codes"`
+	SkipShutdownBeforeArtifact  *bool             `mapstructure:"skip_shutdown_before_artifact" required:"false" cty:"skip_shutdown_before_artifact" hcl:"skip_shutdown_before_artifact"`
+	KeepInstance                *bool             `mapstructure:"keep_instance" required:"false" cty:"keep_instance" hcl:"keep_instance"`
+	DeletePermanently           *bool             `mapstructure:"delete_permanently" required:"false" cty:"delete_permanently" hcl:"delete_permanently"`
+	VolumeIDsToDelete           []string          `mapstructure:"volume_ids_to_delete" required:"false" cty:"volume_ids_to_delete" hcl:"volume_ids_to_delete"`
+	PollInterval                *string           `mapstructure:"poll_interval" required:"false" cty:"poll_interval" hcl:"poll_interval"`
+	InstanceTimeout             *string           `mapstructure:"instance_timeout" required:"false" cty:"instance_timeout" hcl:"instance_timeout"`
+	APITimeout                  *string           `mapstructure:"api_timeout" required:"false" cty:"api_timeout" hcl:"api_timeout"`
+	AllowedSSHStatuses          []string          `mapstructure:"allowed_ssh_statuses" required:"false" cty:"allowed_ssh_statuses" hcl:"allowed_ssh_statuses"`
 }
 
 // FlatMapstructure returns a new FlatConfig.
@@ -221,11 +221,11 @@ func (*FlatConfig) HCL2Spec() map[string]hcldec.Spec {
 // FlatVolume is an auto-generated flat version of Volume.
 // Where the contents of a field with a `mapstructure:,squash` tag are bubbled up.
 type FlatVolume struct {
-	Name              *string `mapstructure:"name" cty:"name" hcl:"name"`
-	Size              *int    `mapstructure:"size" cty:"size" hcl:"size"`
-	Type              *string `mapstructure:"type" cty:"type" hcl:"type"`
-	LocationCode      *string `mapstructure:"location_code" cty:"location_code" hcl:"location_code"`
-	OnSpotDiscontinue *string `mapstructure:"on_spot_discontinue" cty:"on_spot_discontinue" hcl:"on_spot_discontinue"`
+	Name              *string `mapstructure:"name" required:"true" cty:"name" hcl:"name"`
+	Size              *int    `mapstructure:"size" required:"true" cty:"size" hcl:"size"`
+	Type              *string `mapstructure:"type" required:"true" cty:"type" hcl:"type"`
+	LocationCode      *string `mapstructure:"location_code" required:"false" cty:"location_code" hcl:"location_code"`
+	OnSpotDiscontinue *string `mapstructure:"on_spot_discontinue" required:"false" cty:"on_spot_discontinue" hcl:"on_spot_discontinue"`
 }
 
 // FlatMapstructure returns a new FlatVolume.
