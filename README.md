@@ -105,3 +105,15 @@ make tidy
 make test
 make lint
 ```
+
+## Release
+
+Packer remote plugin installation expects GitHub release assets named with the plugin API version and a SHA256SUMS file. This repository uses GoReleaser, following the same release asset pattern as `digitalocean/packer-plugin-digitalocean`.
+
+```sh
+make snapshot
+git tag -a v0.1.0 -m v0.1.0
+git push origin v0.1.0
+```
+
+The tag push runs GoReleaser in GitHub Actions and uploads archives such as `packer-plugin-verda_v0.1.0_x5.0_linux_amd64.zip` plus `packer-plugin-verda_v0.1.0_SHA256SUMS`.

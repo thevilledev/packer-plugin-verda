@@ -1,0 +1,46 @@
+version: 2
+
+project_name: packer-plugin-verda
+
+env:
+  - CGO_ENABLED=0
+  - API_VERSION=x5.0
+
+before:
+  hooks:
+    - go test ./...
+
+builds:
+  - id: packer-plugin-verda
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - >-
+        -s -w
+        -X {{ .ModulePath }}/version.Version={{ .Version }}
+        -X {{ .ModulePath }}/version.VersionPrerelease=
+        -X {{ .ModulePath }}/version.VersionMetadata=
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    binary: "{{ .ProjectName }}_v{{ .Version }}_{{ .Env.API_VERSION }}_{{ .Os }}_{{ .Arch }}"
+
+archives:
+  - id: packer-plugin-verda
+    formats:
+      - zip
+    files:
+      - none*
+    name_template: "{{ .ProjectName }}_v{{ .Version }}_{{ .Env.API_VERSION }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "{{ .ProjectName }}_v{{ .Version }}_SHA256SUMS"
+  algorithm: sha256
+
+changelog:
+  use: github-native

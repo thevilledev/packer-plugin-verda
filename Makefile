@@ -4,7 +4,7 @@ VERSION_PKG := $(MODULE)/version
 VERSION ?= 0.1.0
 PLUGIN_SOURCE := github.com/thevilledev/verda
 
-.PHONY: build dev test lint fmt tidy plugin-check clean
+.PHONY: build dev test lint fmt tidy plugin-check snapshot release clean
 
 build:
 	go build -trimpath -ldflags="-X $(VERSION_PKG).Version=$(VERSION)" -o $(PLUGIN_NAME) .
@@ -26,6 +26,12 @@ tidy:
 
 plugin-check: build
 	packer plugins install --path ./$(PLUGIN_NAME) $(PLUGIN_SOURCE)
+
+snapshot:
+	goreleaser release --snapshot --clean
+
+release:
+	goreleaser release --clean
 
 clean:
 	rm -f $(PLUGIN_NAME)
