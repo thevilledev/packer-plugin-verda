@@ -1,11 +1,16 @@
 PLUGIN_NAME := packer-plugin-verda
 MODULE := $(shell go list -m)
 VERSION_PKG := $(MODULE)/version
+VERSION ?= 0.1.0
+PLUGIN_SOURCE := github.com/thevilledev/verda
 
-.PHONY: build test lint fmt tidy plugin-check clean
+.PHONY: build dev test lint fmt tidy plugin-check clean
 
 build:
-	go build -trimpath -ldflags="-X $(VERSION_PKG).VersionPrerelease=dev" -o $(PLUGIN_NAME) .
+	go build -trimpath -ldflags="-X $(VERSION_PKG).Version=$(VERSION)" -o $(PLUGIN_NAME) .
+
+dev:
+	go build -trimpath -ldflags="-X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).VersionPrerelease=dev" -o $(PLUGIN_NAME) .
 
 test:
 	go test -race ./...
@@ -20,7 +25,7 @@ tidy:
 	go mod tidy
 
 plugin-check: build
-	packer plugins install --path ./$(PLUGIN_NAME) github.com/verda-cloud/verda
+	packer plugins install --path ./$(PLUGIN_NAME) $(PLUGIN_SOURCE)
 
 clean:
 	rm -f $(PLUGIN_NAME)

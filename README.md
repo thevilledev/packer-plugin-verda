@@ -17,7 +17,10 @@ For image-like workflows, set `artifact_type = "os_volume"`. The builder will sh
 ```sh
 make build
 packer plugins install --path ./packer-plugin-verda github.com/thevilledev/verda
+packer build examples/basic.pkr.hcl
 ```
+
+For private repositories, prefer the manual install path above. `packer init` queries GitHub for release tags and assets; for a private repository, that requires `PACKER_GITHUB_API_TOKEN` with access to the repo and a GitHub release that includes Packer plugin artifacts and SHA256SUM files.
 
 ## Configuration
 
@@ -27,7 +30,7 @@ Credentials can be provided with `client_id` and `client_secret`, or through `VE
 packer {
   required_plugins {
     verda = {
-      version = ">= 0.0.1"
+      version = ">= 0.1.0"
       source  = "github.com/thevilledev/verda"
     }
   }
