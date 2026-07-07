@@ -91,11 +91,11 @@ type Config struct {
 	ArtifactType string `mapstructure:"artifact_type" required:"false"`
 	// Clone the source OS volume when artifact_type is os_volume. Defaults to true.
 	CloneOSVolume *bool `mapstructure:"clone_os_volume" required:"false"`
-	// Name for the cloned OS volume artifact.
+	// Name for each cloned OS volume artifact.
 	ArtifactVolumeName string `mapstructure:"artifact_volume_name" required:"false"`
-	// Location for a single cloned OS volume artifact. Defaults to location_code.
+	// Target location for a cloned OS volume artifact. Defaults to location_code, and the source location is also retained.
 	ArtifactVolumeLocationCode string `mapstructure:"artifact_volume_location_code" required:"false"`
-	// Locations for cloned OS volume artifacts. The first location becomes the primary artifact ID.
+	// Target locations for cloned OS volume artifacts. The first location becomes the primary artifact ID, and the source location is also retained.
 	ArtifactVolumeLocationCodes []string `mapstructure:"artifact_volume_location_codes" required:"false"`
 	// Skip shutting down the instance before creating an OS volume artifact.
 	SkipShutdownBeforeArtifact bool `mapstructure:"skip_shutdown_before_artifact" required:"false"`

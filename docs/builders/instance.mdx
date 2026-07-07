@@ -86,7 +86,7 @@ build {
 
 ## OS Volume Artifacts
 
-Set `artifact_type = "os_volume"` to return a cloned OS volume instead of the instance. For multi-location fleets, set `artifact_volume_location_codes` to clone the artifact volume to each target location. The first location is the primary artifact ID, and generated data exposes all volume IDs by location.
+Set `artifact_type = "os_volume"` to return a cloned OS volume instead of the instance. For multi-location fleets, set `artifact_volume_location_codes` to clone the artifact volume to each target location; the source location is also retained as a cloned artifact. The first configured location is the primary artifact ID, and generated data exposes all volume IDs by location.
 
 Instances booted later from an existing OS volume cannot rely on Verda `ssh_key_ids` injection. Bake durable login keys into the guest during the Packer build, and enable `ssh_clear_authorized_keys` so Packer's temporary build key is removed before the volume is captured.
 

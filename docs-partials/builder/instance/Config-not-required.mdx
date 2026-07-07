@@ -44,11 +44,11 @@
 
 - `clone_os_volume` (\*bool) - Clone the source OS volume when artifact_type is os_volume. Defaults to true.
 
-- `artifact_volume_name` (string) - Name for the cloned OS volume artifact.
+- `artifact_volume_name` (string) - Name for each cloned OS volume artifact.
 
-- `artifact_volume_location_code` (string) - Location for a single cloned OS volume artifact. Defaults to location_code.
+- `artifact_volume_location_code` (string) - Target location for a cloned OS volume artifact. Defaults to location_code, and the source location is also retained.
 
-- `artifact_volume_location_codes` ([]string) - Locations for cloned OS volume artifacts. The first location becomes the primary artifact ID.
+- `artifact_volume_location_codes` ([]string) - Target locations for cloned OS volume artifacts. The first location becomes the primary artifact ID, and the source location is also retained.
 
 - `skip_shutdown_before_artifact` (bool) - Skip shutting down the instance before creating an OS volume artifact.
 
