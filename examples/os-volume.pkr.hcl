@@ -8,14 +8,16 @@ packer {
 }
 
 source "verda-instance" "ubuntu_volume" {
-  instance_type = "V100"
+  instance_type = "1A6000.10V"
+  location_code = "FIN-01"
   image         = "ubuntu-24.04"
   hostname      = "packer-verda-volume"
 
   ssh_username = "root"
 
-  artifact_type        = "os_volume"
-  artifact_volume_name = "packer-verda-volume-root"
+  artifact_type                  = "os_volume"
+  artifact_volume_name           = "packer-verda-volume-root"
+  artifact_volume_location_codes = ["FIN-01", "FIN-03"]
 }
 
 build {

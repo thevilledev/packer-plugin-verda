@@ -91,12 +91,17 @@ func (b *Builder) Run(ctx context.Context, ui packer.Ui, hook packer.Hook) (pack
 		if !ok {
 			return nil, fmt.Errorf("volume artifact state is missing after build")
 		}
+		replicas := normalizedVolumeReplicas(volumeState)
 		artifact.VolumeID = volumeState.ID
+		artifact.VolumeIDs = volumeReplicaIDs(replicas)
+		artifact.VolumeIDsByLocation = volumeReplicaIDsByLocation(replicas)
 		artifact.SourceOSVolumeID = volumeState.SourceOSVolumeID
 		artifact.VolumeName = volumeState.Name
 		artifact.VolumeLocation = volumeState.Location
+		artifact.VolumeLocations = volumeReplicaLocations(replicas)
 		artifact.VolumeStatus = volumeState.Status
 		artifact.ClonedVolume = volumeState.Cloned
+		artifact.DeleteConfig.VolumeIDs = artifact.VolumeIDs
 		artifact.DeleteConfig.DeleteOnDestroy = true
 		artifact.StateData = generatedDataForArtifact(instanceState, volumeState)
 	}

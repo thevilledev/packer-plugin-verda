@@ -30,6 +30,15 @@ type volumeArtifactState struct {
 	Location         string
 	Status           string
 	Cloned           bool
+	Replicas         []volumeReplicaState
+}
+
+type volumeReplicaState struct {
+	ID       string
+	Name     string
+	Location string
+	Status   string
+	Cloned   bool
 }
 
 func clientFromState(state multistep.StateBag) verdaClient {
@@ -102,20 +111,79 @@ func volumeArtifactFromState(state multistep.StateBag) (volumeArtifactState, boo
 }
 
 func generatedDataForArtifact(current instanceState, volume volumeArtifactState) map[string]interface{} {
+	replicas := normalizedVolumeReplicas(volume)
 	return map[string]interface{}{
-		"ID":               volume.ID,
-		"ArtifactType":     artifactTypeOSVolume,
-		"InstanceID":       current.ID,
-		"InstanceIP":       current.IP,
-		"InstanceStatus":   current.Status,
-		"InstanceType":     current.InstanceType,
-		"Location":         current.Location,
-		"OSVolumeID":       current.OSVolumeID,
-		"VolumeID":         volume.ID,
-		"SourceOSVolumeID": volume.SourceOSVolumeID,
-		"VolumeName":       volume.Name,
-		"VolumeLocation":   volume.Location,
-		"VolumeStatus":     volume.Status,
-		"VolumeCloned":     volume.Cloned,
+		"ID":                       volume.ID,
+		"ArtifactType":             artifactTypeOSVolume,
+		"InstanceID":               current.ID,
+		"InstanceIP":               current.IP,
+		"InstanceStatus":           current.Status,
+		"InstanceType":             current.InstanceType,
+		"Location":                 current.Location,
+		"OSVolumeID":               current.OSVolumeID,
+		"VolumeID":                 volume.ID,
+		"VolumeIDs":                volumeReplicaIDs(replicas),
+		"VolumeIDsByLocation":      volumeReplicaIDsByLocation(replicas),
+		"SourceOSVolumeID":         volume.SourceOSVolumeID,
+		"VolumeName":               volume.Name,
+		"VolumeNamesByLocation":    volumeReplicaNamesByLocation(replicas),
+		"VolumeLocation":           volume.Location,
+		"VolumeLocations":          volumeReplicaLocations(replicas),
+		"VolumeStatus":             volume.Status,
+		"VolumeStatusesByLocation": volumeReplicaStatusesByLocation(replicas),
+		"VolumeCloned":             volume.Cloned,
 	}
+}
+
+func normalizedVolumeReplicas(volume volumeArtifactState) []volumeReplicaState {
+	if len(volume.Replicas) > 0 {
+		return volume.Replicas
+	}
+	return []volumeReplicaState{{
+		ID:       volume.ID,
+		Name:     volume.Name,
+		Location: volume.Location,
+		Status:   volume.Status,
+		Cloned:   volume.Cloned,
+	}}
+}
+
+func volumeReplicaIDs(replicas []volumeReplicaState) []string {
+	ids := make([]string, 0, len(replicas))
+	for _, replica := range replicas {
+		ids = append(ids, replica.ID)
+	}
+	return ids
+}
+
+func volumeReplicaLocations(replicas []volumeReplicaState) []string {
+	locations := make([]string, 0, len(replicas))
+	for _, replica := range replicas {
+		locations = append(locations, replica.Location)
+	}
+	return locations
+}
+
+func volumeReplicaIDsByLocation(replicas []volumeReplicaState) map[string]string {
+	ids := make(map[string]string, len(replicas))
+	for _, replica := range replicas {
+		ids[replica.Location] = replica.ID
+	}
+	return ids
+}
+
+func volumeReplicaNamesByLocation(replicas []volumeReplicaState) map[string]string {
+	names := make(map[string]string, len(replicas))
+	for _, replica := range replicas {
+		names[replica.Location] = replica.Name
+	}
+	return names
+}
+
+func volumeReplicaStatusesByLocation(replicas []volumeReplicaState) map[string]string {
+	statuses := make(map[string]string, len(replicas))
+	for _, replica := range replicas {
+		statuses[replica.Location] = replica.Status
+	}
+	return statuses
 }

@@ -272,35 +272,71 @@ func (s *stepCreateOSVolumeArtifact) Run(ctx context.Context, state multistep.St
 		Cloned:           false,
 	}
 	if s.Config.shouldCloneOSVolume() {
+		sourceVolume, err := client.GetVolume(ctx, current.OSVolumeID)
+		if err != nil {
+			state.Put("error", fmt.Errorf("getting source OS volume %s: %w", current.OSVolumeID, err))
+			return multistep.ActionHalt
+		}
+
 		name := s.Config.ArtifactVolumeName
 		if name == "" {
 			name = current.ID + "-packer-os-volume"
 		}
-		ui.Say("Cloning Verda OS volume for artifact...")
-		clonedID, err := client.CloneVolume(ctx, current.OSVolumeID, verda.VolumeCloneRequest{
-			Name:         name,
-			LocationCode: s.Config.ArtifactVolumeLocationCode,
-		})
-		if err != nil {
-			state.Put("error", fmt.Errorf("cloning OS volume %s: %w", current.OSVolumeID, err))
-			return multistep.ActionHalt
+
+		locations := artifactVolumeLocations(s.Config, current.Location)
+		replicas := make([]volumeReplicaState, 0, len(locations))
+		for _, location := range locations {
+			cloneName := artifactVolumeName(name, location, len(locations) > 1)
+			ui.Say(fmt.Sprintf("Cloning Verda OS volume for artifact in %s...", location))
+			clonedID, err := client.CloneVolume(ctx, current.OSVolumeID, volumeCloneRequest{
+				Name:         cloneName,
+				LocationCode: location,
+				Type:         firstNonEmpty(sourceVolume.Type, verda.VolumeTypeNVMe),
+			})
+			if err != nil {
+				state.Put("error", fmt.Errorf("cloning OS volume %s to %s: %w", current.OSVolumeID, location, err))
+				return multistep.ActionHalt
+			}
+			replicas = append(replicas, volumeReplicaState{
+				ID:       clonedID,
+				Name:     cloneName,
+				Location: location,
+				Cloned:   true,
+			})
+			ui.Say(fmt.Sprintf("Created OS volume artifact %s in %s", clonedID, location))
 		}
-		volume.ID = clonedID
-		volume.Name = name
-		volume.Location = s.Config.ArtifactVolumeLocationCode
+
+		for i := range replicas {
+			sdkVolume, err := waitForVolumeReady(ctx, client, replicas[i].ID, s.Config)
+			if err != nil {
+				state.Put("error", err)
+				return multistep.ActionHalt
+			}
+			replicas[i].Name = firstNonEmpty(sdkVolume.Name, replicas[i].Name)
+			replicas[i].Location = firstNonEmpty(sdkVolume.Location, replicas[i].Location)
+			replicas[i].Status = sdkVolume.Status
+		}
+
+		volume.ID = replicas[0].ID
+		volume.Name = replicas[0].Name
+		volume.Location = replicas[0].Location
+		volume.Status = replicas[0].Status
 		volume.Cloned = true
-		ui.Say(fmt.Sprintf("Created OS volume artifact %s", clonedID))
+		volume.Replicas = replicas
 	} else {
 		ui.Say(fmt.Sprintf("Using source OS volume %s as artifact", current.OSVolumeID))
-	}
-
-	if sdkVolume, err := waitForVolumeReady(ctx, client, volume.ID, s.Config); err == nil {
-		volume.Name = firstNonEmpty(volume.Name, sdkVolume.Name)
-		volume.Location = firstNonEmpty(volume.Location, sdkVolume.Location)
-		volume.Status = sdkVolume.Status
-	} else if volume.Cloned {
-		state.Put("error", err)
-		return multistep.ActionHalt
+		if sdkVolume, err := waitForVolumeReady(ctx, client, volume.ID, s.Config); err == nil {
+			volume.Name = firstNonEmpty(volume.Name, sdkVolume.Name)
+			volume.Location = firstNonEmpty(volume.Location, sdkVolume.Location)
+			volume.Status = sdkVolume.Status
+		}
+		volume.Replicas = []volumeReplicaState{{
+			ID:       volume.ID,
+			Name:     volume.Name,
+			Location: volume.Location,
+			Status:   volume.Status,
+			Cloned:   false,
+		}}
 	}
 
 	saveVolumeArtifactState(state, volume)
@@ -315,6 +351,23 @@ func shouldPreserveSourceOSVolume(config *Config, state multistep.StateBag, curr
 	}
 	volume, ok := volumeArtifactFromState(state)
 	return ok && volume.ID == current.OSVolumeID
+}
+
+func artifactVolumeLocations(config *Config, fallback string) []string {
+	if len(config.ArtifactVolumeLocationCodes) > 0 {
+		return config.ArtifactVolumeLocationCodes
+	}
+	if config.ArtifactVolumeLocationCode != "" {
+		return []string{config.ArtifactVolumeLocationCode}
+	}
+	return []string{firstNonEmpty(fallback, config.LocationCode, defaultLocationCode)}
+}
+
+func artifactVolumeName(baseName, location string, multiLocation bool) string {
+	if !multiLocation {
+		return baseName
+	}
+	return fmt.Sprintf("%s-%s", baseName, strings.ToLower(location))
 }
 
 func waitForInstanceStatuses(ctx context.Context, client verdaClient, id string, config *Config, statuses ...string) (*verda.Instance, error) {

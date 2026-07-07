@@ -4,7 +4,7 @@
 
 The first builder is `verda.instance`. It creates a Verda instance, waits for it to become reachable, and runs standard Packer provisioners over SSH. By default it returns the created instance as the build artifact.
 
-For image-like workflows, set `artifact_type = "os_volume"`. The builder will shut down the provisioned instance, clone its OS volume, and return the cloned volume as the artifact. The Verda API accepts a previously customized OS volume ID in the instance `image` field, so that volume ID can be used later by Terraform or another API client as the source OS disk for new instances. For fleets, keep the Packer artifact as a golden volume and clone it once per instance before launch.
+For image-like workflows, set `artifact_type = "os_volume"`. The builder will shut down the provisioned instance, clone its OS volume, and return the cloned volume as the artifact. The Verda API accepts a previously customized OS volume ID in the instance `image` field, so that volume ID can be used later by Terraform or another API client as the source OS disk for new instances. For multi-location fleets, clone the Packer artifact to each target Verda location and select the matching volume ID when launching each instance.
 
 ## Requirements
 
@@ -70,6 +70,8 @@ build {
 - `artifact_type = "os_volume"` returns a cloned OS volume artifact instead of an instance artifact.
 - `clone_os_volume` defaults to `true`; set it to `false` to use the source OS volume directly.
 - `artifact_volume_name` controls the cloned OS volume name.
+- `artifact_volume_location_code` controls the single cloned OS volume location.
+- `artifact_volume_location_codes` clones the OS volume to multiple locations. The first location is the primary artifact ID, and generated data exposes all volume IDs by location.
 - `skip_shutdown_before_artifact = true` skips the default shutdown before OS volume capture.
 - `keep_instance = true` keeps the created instance after the build. The default is to delete it during cleanup.
 - `volume_ids_to_delete` controls which volumes are deleted when the instance is deleted.
@@ -77,19 +79,19 @@ build {
 
 ## Terraform Handoff
 
-When `artifact_type = "os_volume"`, the Packer artifact ID is the cloned OS volume ID. For one derived instance, pass that ID or a clone of it to Terraform as the Verda instance `image`; do not put it in `existing_volumes`, which is only for additional non-OS volumes.
+When `artifact_type = "os_volume"`, the Packer artifact ID is the primary cloned OS volume ID. For one derived instance, pass that ID or a clone of it to Terraform as the Verda instance `image`; do not put it in `existing_volumes`, which is only for additional non-OS volumes.
 
-For multiple instances, clone the Packer artifact once per instance, then pass each clone ID as that instance's `image`. The current Verda Terraform provider can consume the OS volume ID, but does not expose a first-class volume clone resource, so create clone IDs through the API, Go SDK, or a small pre-Terraform step.
+For multiple locations, set `artifact_volume_location_codes` during the Packer build and store the generated `VolumeIDsByLocation` map. For multiple instances in the same location, clone that location's Packer artifact once per instance, then pass each clone ID as that instance's `image`. The current Verda Terraform provider can consume the OS volume ID, but does not expose a first-class volume clone resource, so create per-instance clone IDs through the API, Go SDK, or a small pre-Terraform step.
 
 ```hcl
-variable "os_volume_id" {
-  description = "Packer artifact ID or a per-instance clone of it."
-  type = string
+variable "os_volume_ids_by_location" {
+  description = "Packer VolumeIDsByLocation generated data."
+  type        = map(string)
 }
 
 resource "verda_instance" "app" {
   instance_type = "1B200.30V"
-  image         = var.os_volume_id
+  image         = var.os_volume_ids_by_location["FIN-03"]
   hostname      = "app-01"
   description   = "App server from Packer OS volume"
   location      = "FIN-03"

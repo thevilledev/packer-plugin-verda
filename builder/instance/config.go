@@ -61,11 +61,12 @@ type Config struct {
 	OSVolumeSpotBehavior string   `mapstructure:"os_volume_spot_behavior"`
 	Volumes              []Volume `mapstructure:"volume"`
 
-	ArtifactType               string `mapstructure:"artifact_type"`
-	CloneOSVolume              *bool  `mapstructure:"clone_os_volume"`
-	ArtifactVolumeName         string `mapstructure:"artifact_volume_name"`
-	ArtifactVolumeLocationCode string `mapstructure:"artifact_volume_location_code"`
-	SkipShutdownBeforeArtifact bool   `mapstructure:"skip_shutdown_before_artifact"`
+	ArtifactType                string   `mapstructure:"artifact_type"`
+	CloneOSVolume               *bool    `mapstructure:"clone_os_volume"`
+	ArtifactVolumeName          string   `mapstructure:"artifact_volume_name"`
+	ArtifactVolumeLocationCode  string   `mapstructure:"artifact_volume_location_code"`
+	ArtifactVolumeLocationCodes []string `mapstructure:"artifact_volume_location_codes"`
+	SkipShutdownBeforeArtifact  bool     `mapstructure:"skip_shutdown_before_artifact"`
 
 	KeepInstance       bool          `mapstructure:"keep_instance"`
 	DeletePermanently  bool          `mapstructure:"delete_permanently"`
@@ -119,9 +120,14 @@ func (c *Config) Prepare(raws ...interface{}) ([]string, []string, error) {
 		"SourceOSVolumeID",
 		"VolumeCloned",
 		"VolumeID",
+		"VolumeIDs",
+		"VolumeIDsByLocation",
 		"VolumeLocation",
+		"VolumeLocations",
 		"VolumeName",
+		"VolumeNamesByLocation",
 		"VolumeStatus",
+		"VolumeStatusesByLocation",
 	}
 	return generated, nil, nil
 }
@@ -171,8 +177,13 @@ func (c *Config) setDefaults() {
 	if c.ArtifactType == "" {
 		c.ArtifactType = artifactTypeInstance
 	}
-	if c.ArtifactVolumeLocationCode == "" {
-		c.ArtifactVolumeLocationCode = c.LocationCode
+	if len(c.ArtifactVolumeLocationCodes) > 0 {
+		c.ArtifactVolumeLocationCode = c.ArtifactVolumeLocationCodes[0]
+	} else {
+		if c.ArtifactVolumeLocationCode == "" {
+			c.ArtifactVolumeLocationCode = c.LocationCode
+		}
+		c.ArtifactVolumeLocationCodes = []string{c.ArtifactVolumeLocationCode}
 	}
 }
 
@@ -223,6 +234,23 @@ func (c *Config) validate() error {
 	}
 	if c.ArtifactType == artifactTypeOSVolume && c.KeepInstance && !c.shouldCloneOSVolume() {
 		errs = append(errs, errors.New("keep_instance cannot be true when artifact_type is os_volume and clone_os_volume is false"))
+	}
+	if c.ArtifactType == artifactTypeOSVolume && !c.shouldCloneOSVolume() && len(c.ArtifactVolumeLocationCodes) > 1 {
+		errs = append(errs, errors.New("artifact_volume_location_codes requires clone_os_volume to be true"))
+	}
+	seenArtifactLocations := make(map[string]struct{}, len(c.ArtifactVolumeLocationCodes))
+	for i, location := range c.ArtifactVolumeLocationCodes {
+		location = strings.TrimSpace(location)
+		if location == "" {
+			errs = append(errs, fmt.Errorf("artifact_volume_location_codes.%d must be set", i))
+			continue
+		}
+		if _, ok := seenArtifactLocations[location]; ok {
+			errs = append(errs, fmt.Errorf("artifact_volume_location_codes.%d duplicates %q", i, location))
+			continue
+		}
+		seenArtifactLocations[location] = struct{}{}
+		c.ArtifactVolumeLocationCodes[i] = location
 	}
 	for i, volume := range c.Volumes {
 		if volume.Name == "" {

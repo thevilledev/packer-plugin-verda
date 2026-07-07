@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -14,23 +15,26 @@ type DeleteConfig struct {
 
 // Artifact describes the Verda resource produced by a build.
 type Artifact struct {
-	Client           verdaClient
-	ArtifactType     string
-	InstanceID       string
-	InstanceIP       string
-	Status           string
-	Location         string
-	InstanceType     string
-	OSVolumeID       string
-	VolumeID         string
-	SourceOSVolumeID string
-	VolumeName       string
-	VolumeLocation   string
-	VolumeStatus     string
-	ClonedVolume     bool
-	KeepInstance     bool
-	DeleteConfig     DeleteConfig
-	StateData        map[string]interface{}
+	Client              verdaClient
+	ArtifactType        string
+	InstanceID          string
+	InstanceIP          string
+	Status              string
+	Location            string
+	InstanceType        string
+	OSVolumeID          string
+	VolumeID            string
+	VolumeIDs           []string
+	VolumeIDsByLocation map[string]string
+	SourceOSVolumeID    string
+	VolumeName          string
+	VolumeLocation      string
+	VolumeLocations     []string
+	VolumeStatus        string
+	ClonedVolume        bool
+	KeepInstance        bool
+	DeleteConfig        DeleteConfig
+	StateData           map[string]interface{}
 }
 
 // BuilderId returns the Packer builder ID that produced this artifact.
@@ -58,6 +62,9 @@ func (a *Artifact) Id() string {
 func (a *Artifact) String() string {
 	if a.ArtifactType == artifactTypeOSVolume {
 		message := fmt.Sprintf("Verda OS volume: %s", a.VolumeID)
+		if len(a.VolumeIDs) > 1 {
+			message = fmt.Sprintf("Verda OS volumes: %s (%d total)", a.VolumeID, len(a.VolumeIDs))
+		}
 		if a.ClonedVolume {
 			message += fmt.Sprintf(" (cloned from %s)", a.SourceOSVolumeID)
 		}
@@ -85,10 +92,20 @@ func (a *Artifact) Destroy() error {
 		return nil
 	}
 	if a.ArtifactType == artifactTypeOSVolume {
-		if a.VolumeID == "" {
+		volumeIDs := a.DeleteConfig.VolumeIDs
+		if len(volumeIDs) == 0 && a.VolumeID != "" {
+			volumeIDs = []string{a.VolumeID}
+		}
+		if len(volumeIDs) == 0 {
 			return nil
 		}
-		return a.Client.DeleteVolume(context.Background(), a.VolumeID, a.DeleteConfig.DeletePermanently)
+		var errs []error
+		for _, id := range volumeIDs {
+			if err := a.Client.DeleteVolume(context.Background(), id, a.DeleteConfig.DeletePermanently); err != nil {
+				errs = append(errs, fmt.Errorf("deleting volume %s: %w", id, err))
+			}
+		}
+		return errors.Join(errs...)
 	}
 	if a.InstanceID == "" {
 		return nil

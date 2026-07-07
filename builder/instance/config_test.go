@@ -142,3 +142,59 @@ func TestConfigPrepareOSVolumeArtifactValidation(t *testing.T) {
 		t.Fatal("expected keep_instance with un-cloned OS volume artifact to fail")
 	}
 }
+
+func TestConfigPrepareArtifactVolumeLocationCodes(t *testing.T) {
+	var c Config
+	_, _, err := c.Prepare(map[string]interface{}{
+		"client_id":                      "client-id",
+		"client_secret":                  "client-secret",
+		"instance_type":                  "V100",
+		"image":                          "ubuntu-24.04",
+		"hostname":                       "packer-test",
+		"artifact_type":                  "os_volume",
+		"artifact_volume_location_codes": []string{"FIN-01", "FIN-03"},
+	})
+	if err != nil {
+		t.Fatalf("Prepare returned error: %s", err)
+	}
+	if c.ArtifactVolumeLocationCode != "FIN-01" {
+		t.Fatalf("ArtifactVolumeLocationCode = %q", c.ArtifactVolumeLocationCode)
+	}
+	if len(c.ArtifactVolumeLocationCodes) != 2 || c.ArtifactVolumeLocationCodes[1] != "FIN-03" {
+		t.Fatalf("ArtifactVolumeLocationCodes = %#v", c.ArtifactVolumeLocationCodes)
+	}
+}
+
+func TestConfigPrepareArtifactVolumeLocationCodesRejectsDuplicates(t *testing.T) {
+	var c Config
+	_, _, err := c.Prepare(map[string]interface{}{
+		"client_id":                      "client-id",
+		"client_secret":                  "client-secret",
+		"instance_type":                  "V100",
+		"image":                          "ubuntu-24.04",
+		"hostname":                       "packer-test",
+		"artifact_type":                  "os_volume",
+		"artifact_volume_location_codes": []string{"FIN-01", "FIN-01"},
+	})
+	if err == nil {
+		t.Fatal("expected duplicate artifact volume locations to fail")
+	}
+}
+
+func TestConfigPrepareArtifactVolumeLocationCodesRequireCloning(t *testing.T) {
+	clone := false
+	var c Config
+	_, _, err := c.Prepare(map[string]interface{}{
+		"client_id":                      "client-id",
+		"client_secret":                  "client-secret",
+		"instance_type":                  "V100",
+		"image":                          "ubuntu-24.04",
+		"hostname":                       "packer-test",
+		"artifact_type":                  "os_volume",
+		"clone_os_volume":                clone,
+		"artifact_volume_location_codes": []string{"FIN-01", "FIN-03"},
+	})
+	if err == nil {
+		t.Fatal("expected multi-location artifact without cloning to fail")
+	}
+}
