@@ -1,5 +1,8 @@
 # Packer Plugin Verda
 
+> [!NOTE]
+> This is an unofficial implementation. Probably not production ready yet.
+
 `packer-plugin-verda` provides a Packer builder for Verda Cloud.
 
 The `verda-instance` builder creates a Verda instance, waits for it to become reachable, runs provisioners, and returns either the created instance or a cloned OS volume artifact.
