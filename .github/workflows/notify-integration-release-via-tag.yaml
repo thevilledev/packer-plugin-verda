@@ -2,8 +2,12 @@ name: Notify Integration Release (Tag)
 
 on:
   push:
-    tags:
-      - "v*"
+    # disabled until provider recognised upstream
+    # Restore `tags: ["v*"]` when the integration notification is needed.
+    branches-ignore:
+      - "**"
+    tags-ignore:
+      - "**"
 
 permissions: {}
 
