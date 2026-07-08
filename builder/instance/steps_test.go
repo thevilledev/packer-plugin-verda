@@ -175,6 +175,28 @@ func TestStepCreateSSHKey(t *testing.T) {
 	}
 }
 
+func TestStepCreateSSHKeyWithNoneCommunicator(t *testing.T) {
+	cfg := &Config{
+		TemporarySSHKeyName: "packer-key",
+	}
+	cfg.Comm.Type = "none"
+	cfg.Comm.SSHPublicKey = []byte("ssh-rsa AAAA test\n")
+
+	client := &fakeClient{}
+	state := testState(client)
+	step := &stepCreateSSHKey{Config: cfg}
+
+	if action := step.Run(context.Background(), state); action != multistep.ActionContinue {
+		t.Fatalf("action = %v", action)
+	}
+	if client.createSSHKeyReq == nil {
+		t.Fatal("expected SSH key creation")
+	}
+	if got := cfg.SSHKeyIDs[0]; got != "key-1" {
+		t.Fatalf("SSHKeyIDs[0] = %q", got)
+	}
+}
+
 func TestStepCreateInstanceRequest(t *testing.T) {
 	cfg := &Config{
 		InstanceType:      "V100",

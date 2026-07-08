@@ -33,7 +33,7 @@ type stepCreateSSHKey struct {
 }
 
 func (s *stepCreateSSHKey) Run(ctx context.Context, state multistep.StateBag) multistep.StepAction {
-	if s.Config.SkipTemporarySSHKey || s.Config.Comm.Type != "ssh" {
+	if s.Config.SkipTemporarySSHKey {
 		return multistep.ActionContinue
 	}
 	if len(s.Config.Comm.SSHPublicKey) == 0 {
