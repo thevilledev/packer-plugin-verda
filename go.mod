@@ -1,4 +1,4 @@
-module github.com/verda-cloud/packer-plugin-verda
+module github.com/thevilledev/packer-plugin-verda
 
 go 1.26
 

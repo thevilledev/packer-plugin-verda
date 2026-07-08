@@ -31,8 +31,7 @@ packer init .
 For local development or private repositories, install the built binary directly:
 
 ```sh
-make build
-packer plugins install --path ./packer-plugin-verda github.com/thevilledev/verda
+make plugin-install
 ```
 
 ## Usage
@@ -75,11 +74,15 @@ The option reference is generated from the builder config comments with `packer-
 ## Development
 
 ```sh
-make tidy
+make tidy-check
+make check-fmt
 make generate
 make test
 make lint
+make plugin-check
 ```
+
+`make generate` updates generated HCL2 specs and the HashiCorp integration-ready `.web-docs` output.
 
 Render the docs locally with:
 
@@ -92,6 +95,27 @@ Build the GitHub Pages site input with:
 ```sh
 make docs-site
 ```
+
+Run cloud acceptance tests only when you intentionally want to create real Verda resources:
+
+```sh
+PACKER_ACC=1 \
+VERDA_CLIENT_ID=... \
+VERDA_CLIENT_SECRET=... \
+VERDA_ACC_INSTANCE_TYPE=... \
+VERDA_ACC_IMAGE=... \
+make testacc
+```
+
+## Release
+
+Releases are built with GoReleaser and use Packer plugin archive naming:
+
+```sh
+make snapshot
+```
+
+Tagged releases require `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE` GitHub secrets so the checksum file can be signed.
 
 ## License
 

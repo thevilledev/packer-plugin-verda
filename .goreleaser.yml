@@ -4,17 +4,18 @@ project_name: packer-plugin-verda
 
 env:
   - CGO_ENABLED=0
-  - API_VERSION=x5.0
 
 before:
   hooks:
     - go test ./...
+    - make plugin-check
 
 builds:
   - id: packer-plugin-verda
     mod_timestamp: "{{ .CommitTimestamp }}"
     flags:
       - -trimpath
+      - -buildvcs=false
     ldflags:
       - >-
         -s -w
@@ -41,6 +42,22 @@ archives:
 checksum:
   name_template: "{{ .ProjectName }}_v{{ .Version }}_SHA256SUMS"
   algorithm: sha256
+
+signs:
+  - artifacts: checksum
+    args:
+      - "--batch"
+      - "--yes"
+      - "--pinentry-mode"
+      - "loopback"
+      - "--passphrase"
+      - "{{ .Env.GPG_PASSPHRASE }}"
+      - "--local-user"
+      - "{{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "${artifact}"
 
 changelog:
   use: github-native

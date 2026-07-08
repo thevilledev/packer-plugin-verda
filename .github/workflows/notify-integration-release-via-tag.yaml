@@ -1,0 +1,62 @@
+name: Notify Integration Release (Tag)
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+jobs:
+  strip-version:
+    name: Strip Version
+    runs-on: ubuntu-latest
+    outputs:
+      packer-version: ${{ steps.strip.outputs.packer-version }}
+    steps:
+      - name: Strip leading v from version tag
+        id: strip
+        env:
+          REF: ${{ github.ref_name }}
+        run: echo "packer-version=$(echo "$REF" | sed -E 's/^v//')" >> "$GITHUB_OUTPUT"
+
+  notify-release:
+    name: Notify Release
+    needs:
+      - strip-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: .go-version
+          cache: true
+
+      - name: Verify generated docs
+        run: |
+          make generate
+          git diff --exit-code
+
+      - name: Checkout integration-release-action
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: hashicorp/integration-release-action
+          ref: 5c982331bf102b6d9ffae6f820eb9ffda93cd7ea
+          path: ./integration-release-action
+          persist-credentials: false
+
+      - name: Notify Release
+        uses: ./integration-release-action
+        with:
+          integration_identifier: "packer/thevilledev/verda"
+          release_version: ${{ needs.strip-version.outputs.packer-version }}
+          release_sha: ${{ github.sha }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}

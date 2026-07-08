@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/packer-plugin-sdk/multistep"
-	"github.com/verda-cloud/packer-plugin-verda/version"
+	"github.com/thevilledev/packer-plugin-verda/version"
 	"github.com/verda-cloud/verdacloud-sdk-go/pkg/verda"
 )
 

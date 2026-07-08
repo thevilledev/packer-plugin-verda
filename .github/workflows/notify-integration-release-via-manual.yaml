@@ -1,0 +1,53 @@
+name: Notify Integration Release (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: Packer integration release version without a leading v.
+        required: true
+      release_sha:
+        description: Git commit SHA or ref for the release.
+        required: true
+
+permissions: {}
+
+jobs:
+  notify-release:
+    name: Notify Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.release_sha }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: .go-version
+          cache: true
+
+      - name: Verify generated docs
+        run: |
+          make generate
+          git diff --exit-code
+
+      - name: Checkout integration-release-action
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: hashicorp/integration-release-action
+          ref: 5c982331bf102b6d9ffae6f820eb9ffda93cd7ea
+          path: ./integration-release-action
+          persist-credentials: false
+
+      - name: Notify Release
+        uses: ./integration-release-action
+        with:
+          integration_identifier: "packer/thevilledev/verda"
+          release_version: ${{ inputs.release_version }}
+          release_sha: ${{ inputs.release_sha }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}

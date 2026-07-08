@@ -6,8 +6,8 @@ import (
 	"os"
 
 	"github.com/hashicorp/packer-plugin-sdk/plugin"
-	"github.com/verda-cloud/packer-plugin-verda/builder/instance"
-	verdaVersion "github.com/verda-cloud/packer-plugin-verda/version"
+	"github.com/thevilledev/packer-plugin-verda/builder/instance"
+	verdaVersion "github.com/thevilledev/packer-plugin-verda/version"
 )
 
 func main() {

@@ -1,0 +1,38 @@
+name: Acceptance
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  testacc:
+    name: Acceptance
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: .go-version
+          cache: true
+
+      - name: Run acceptance tests
+        run: make testacc
+        env:
+          VERDA_CLIENT_ID: ${{ secrets.VERDA_CLIENT_ID }}
+          VERDA_CLIENT_SECRET: ${{ secrets.VERDA_CLIENT_SECRET }}
+          VERDA_ACC_INSTANCE_TYPE: ${{ vars.VERDA_ACC_INSTANCE_TYPE }}
+          VERDA_ACC_IMAGE: ${{ vars.VERDA_ACC_IMAGE }}
+          VERDA_ACC_LOCATION_CODE: ${{ vars.VERDA_ACC_LOCATION_CODE }}
+          VERDA_ACC_BASE_URL: ${{ vars.VERDA_ACC_BASE_URL }}
