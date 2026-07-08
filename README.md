@@ -62,7 +62,13 @@ build {
 
 To produce a reusable OS volume instead of an instance artifact, set `artifact_type = "os_volume"`. The artifact ID can then be used as the Verda instance `image` value in Terraform or another API client.
 
+
+> [!NOTE]
+> This step requires extra steps - see [examples/README.md](examples/README.md).
+
 When you deploy from an existing Verda OS volume, do not rely on deployment-time `ssh_key_ids` injection. Bake durable login keys into the guest during the Packer build, as shown in [examples/os-volume.pkr.hcl](examples/os-volume.pkr.hcl), and use `ssh_clear_authorized_keys = true` so Packer's temporary build key is removed before the volume is captured.
+
+
 
 ## Documentation
 
