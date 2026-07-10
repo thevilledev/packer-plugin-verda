@@ -87,6 +87,23 @@ func TestParseVolumeCloneResponse(t *testing.T) {
 	}
 }
 
+func TestParseVolumeCloneResponseRejectsMissingID(t *testing.T) {
+	for _, body := range []string{"", `{}`, `[]`, `""`, `null`, `{"id":""}`} {
+		t.Run(body, func(t *testing.T) {
+			if _, err := parseVolumeCloneResponse(json.RawMessage(body)); err == nil {
+				t.Fatalf("parseVolumeCloneResponse(%q) returned nil error", body)
+			}
+		})
+	}
+}
+
+func TestSDKClientCloneVolumeRequiresName(t *testing.T) {
+	client := sdkClient{}
+	if _, err := client.CloneVolume(context.Background(), "vol-source", volumeCloneRequest{}); err == nil {
+		t.Fatal("expected missing clone name to fail")
+	}
+}
+
 func TestSDKClientRetriesUnauthorizedWithFreshToken(t *testing.T) {
 	tokenRequests := 0
 	volumeRequests := 0

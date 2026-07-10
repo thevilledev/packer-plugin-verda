@@ -15,13 +15,14 @@ import (
 	"github.com/hashicorp/packer-plugin-sdk/template/config"
 	"github.com/hashicorp/packer-plugin-sdk/template/interpolate"
 	"github.com/hashicorp/packer-plugin-sdk/uuid"
+	"github.com/verda-cloud/verdacloud-sdk-go/pkg/verda"
 )
 
 const (
 	defaultAPITimeout      = 10 * time.Minute
 	defaultInstanceTimeout = 30 * time.Minute
 	defaultPollInterval    = 15 * time.Second
-	defaultLocationCode    = "FIN-03"
+	defaultLocationCode    = verda.LocationFIN03
 	defaultSSHUsername     = "root"
 
 	artifactTypeInstance = "instance"
@@ -93,14 +94,14 @@ type Config struct {
 	CloneOSVolume *bool `mapstructure:"clone_os_volume" required:"false"`
 	// Name for each cloned OS volume artifact.
 	ArtifactVolumeName string `mapstructure:"artifact_volume_name" required:"false"`
-	// Target location for a cloned OS volume artifact. Defaults to location_code, and the source location is also retained.
+	// Deprecated: use artifact_volume_location_codes. Target location for a cloned OS volume artifact.
 	ArtifactVolumeLocationCode string `mapstructure:"artifact_volume_location_code" required:"false"`
-	// Target locations for cloned OS volume artifacts. The first location becomes the primary artifact ID, and the source location is also retained.
+	// Target locations for cloned OS volume artifacts. The first location is primary; the effective locations also include the source location exactly once.
 	ArtifactVolumeLocationCodes []string `mapstructure:"artifact_volume_location_codes" required:"false"`
 	// Skip shutting down the instance before creating an OS volume artifact.
 	SkipShutdownBeforeArtifact bool `mapstructure:"skip_shutdown_before_artifact" required:"false"`
 
-	// Keep the created instance after the build. By default the instance is deleted during cleanup.
+	// Keep the build instance during failed-build cleanup and when Packer destroys the returned instance artifact.
 	KeepInstance bool `mapstructure:"keep_instance" required:"false"`
 	// Permanently delete resources during cleanup instead of moving them to a recoverable state.
 	DeletePermanently bool `mapstructure:"delete_permanently" required:"false"`
@@ -219,14 +220,12 @@ func (c *Config) setDefaults() {
 		c.Comm.SSHTemporaryKeyPairName = c.TemporarySSHKeyName
 	}
 	if len(c.AllowedSSHStatuses) == 0 {
-		c.AllowedSSHStatuses = []string{"running"}
+		c.AllowedSSHStatuses = []string{verda.StatusRunning}
 	}
 	if c.ArtifactType == "" {
 		c.ArtifactType = artifactTypeInstance
 	}
-	if len(c.ArtifactVolumeLocationCodes) > 0 {
-		c.ArtifactVolumeLocationCode = c.ArtifactVolumeLocationCodes[0]
-	} else {
+	if len(c.ArtifactVolumeLocationCodes) == 0 {
 		if c.ArtifactVolumeLocationCode == "" {
 			c.ArtifactVolumeLocationCode = c.LocationCode
 		}
@@ -236,28 +235,33 @@ func (c *Config) setDefaults() {
 
 func (c *Config) validate() error {
 	var errs []error
-	required := map[string]string{
-		"client_id":        c.ClientID,
-		"client_secret":    c.ClientSecret,
-		"instance_type":    c.InstanceType,
-		"image":            c.Image,
-		"hostname":         c.Hostname,
-		"description":      c.Description,
-		"location_code":    c.LocationCode,
-		"contract":         c.Contract,
-		"poll_interval":    c.PollInterval.String(),
-		"api_timeout":      c.APITimeout.String(),
-		"instance_timeout": c.InstanceTimeout.String(),
+	required := []struct {
+		name  string
+		value string
+	}{
+		{name: "client_id", value: c.ClientID},
+		{name: "client_secret", value: c.ClientSecret},
+		{name: "instance_type", value: c.InstanceType},
+		{name: "image", value: c.Image},
+		{name: "hostname", value: c.Hostname},
+		{name: "description", value: c.Description},
+		{name: "location_code", value: c.LocationCode},
+		{name: "contract", value: c.Contract},
 	}
-	for key, value := range required {
-		if strings.TrimSpace(value) == "" || value == "0s" {
-			errs = append(errs, fmt.Errorf("%s must be set", key))
+	requestFieldsSet := true
+	for _, field := range required {
+		if strings.TrimSpace(field.value) == "" {
+			errs = append(errs, fmt.Errorf("%s must be set", field.name))
+			switch field.name {
+			case "instance_type", "image", "hostname", "description", "contract":
+				requestFieldsSet = false
+			}
 		}
 	}
 	if c.PollInterval < time.Second {
 		errs = append(errs, errors.New("poll_interval must be at least 1s"))
 	}
-	if c.InstanceTimeout < c.PollInterval {
+	if c.InstanceTimeout <= c.PollInterval {
 		errs = append(errs, errors.New("instance_timeout must be greater than poll_interval"))
 	}
 	if c.APITimeout < time.Second {
@@ -285,6 +289,10 @@ func (c *Config) validate() error {
 	if c.ArtifactType == artifactTypeOSVolume && !c.shouldCloneOSVolume() && len(c.ArtifactVolumeLocationCodes) > 1 {
 		errs = append(errs, errors.New("artifact_volume_location_codes requires clone_os_volume to be true"))
 	}
+	if len(c.ArtifactVolumeLocationCodes) > 0 && strings.TrimSpace(c.ArtifactVolumeLocationCode) != "" &&
+		!strings.EqualFold(strings.TrimSpace(c.ArtifactVolumeLocationCode), strings.TrimSpace(c.ArtifactVolumeLocationCodes[0])) {
+		errs = append(errs, errors.New("artifact_volume_location_code must match the first artifact_volume_location_codes entry when both are set"))
+	}
 	seenArtifactLocations := make(map[string]struct{}, len(c.ArtifactVolumeLocationCodes))
 	for i, location := range c.ArtifactVolumeLocationCodes {
 		location = strings.TrimSpace(location)
@@ -292,28 +300,103 @@ func (c *Config) validate() error {
 			errs = append(errs, fmt.Errorf("artifact_volume_location_codes.%d must be set", i))
 			continue
 		}
-		if _, ok := seenArtifactLocations[location]; ok {
+		locationKey := strings.ToLower(location)
+		if _, ok := seenArtifactLocations[locationKey]; ok {
 			errs = append(errs, fmt.Errorf("artifact_volume_location_codes.%d duplicates %q", i, location))
 			continue
 		}
-		seenArtifactLocations[location] = struct{}{}
+		seenArtifactLocations[locationKey] = struct{}{}
 		c.ArtifactVolumeLocationCodes[i] = location
 	}
+	if len(c.ArtifactVolumeLocationCodes) > 0 && strings.TrimSpace(c.ArtifactVolumeLocationCode) == "" {
+		c.ArtifactVolumeLocationCode = c.ArtifactVolumeLocationCodes[0]
+	}
+	seenStatuses := make(map[string]struct{}, len(c.AllowedSSHStatuses))
+	for i, status := range c.AllowedSSHStatuses {
+		status = strings.TrimSpace(status)
+		key := strings.ToLower(status)
+		if status == "" {
+			errs = append(errs, fmt.Errorf("allowed_ssh_statuses.%d must be set", i))
+			continue
+		}
+		if _, ok := seenStatuses[key]; ok {
+			errs = append(errs, fmt.Errorf("allowed_ssh_statuses.%d duplicates %q", i, status))
+			continue
+		}
+		if isTerminalStatus(status) {
+			errs = append(errs, fmt.Errorf("allowed_ssh_statuses.%d cannot contain terminal status %q", i, status))
+			continue
+		}
+		seenStatuses[key] = struct{}{}
+		c.AllowedSSHStatuses[i] = status
+	}
 	for i, volume := range c.Volumes {
-		if volume.Name == "" {
-			errs = append(errs, fmt.Errorf("volume.%d.name must be set", i))
+		if !validSpotDiscontinueBehavior(volume.OnSpotDiscontinue) {
+			errs = append(errs, fmt.Errorf("volume.%d.on_spot_discontinue has invalid value %q", i, volume.OnSpotDiscontinue))
 		}
-		if volume.Size <= 0 {
-			errs = append(errs, fmt.Errorf("volume.%d.size must be greater than zero", i))
-		}
-		if volume.Type == "" {
-			errs = append(errs, fmt.Errorf("volume.%d.type must be set", i))
+	}
+	if requestFieldsSet {
+		if err := c.instanceRequest("", "").Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("instance configuration is invalid: %w", err))
 		}
 	}
 	if len(errs) == 0 {
 		return nil
 	}
 	return errors.Join(errs...)
+}
+
+func (c *Config) instanceRequest(temporarySSHKeyID, createdStartupScriptID string) verda.CreateInstanceRequest {
+	sshKeyIDs := append([]string(nil), c.SSHKeyIDs...)
+	if temporarySSHKeyID != "" {
+		sshKeyIDs = append([]string{temporarySSHKeyID}, sshKeyIDs...)
+	}
+	req := verda.CreateInstanceRequest{
+		InstanceType:    c.InstanceType,
+		Image:           c.Image,
+		Hostname:        c.Hostname,
+		Description:     c.Description,
+		SSHKeyIDs:       sshKeyIDs,
+		LocationCode:    c.LocationCode,
+		Contract:        c.Contract,
+		Pricing:         c.Pricing,
+		ExistingVolumes: append([]string(nil), c.ExistingVolumeIDs...),
+		IsSpot:          c.IsSpot,
+		Volumes:         make([]verda.VolumeCreateRequest, 0, len(c.Volumes)),
+	}
+	startupScriptID := firstNonEmpty(createdStartupScriptID, c.StartupScriptID)
+	if startupScriptID != "" {
+		req.StartupScriptID = &startupScriptID
+	}
+	if c.Coupon != "" {
+		req.Coupon = &c.Coupon
+	}
+	if c.OSVolumeName != "" || c.OSVolumeSize != 0 || c.OSVolumeSpotBehavior != "" {
+		req.OSVolume = &verda.OSVolumeCreateRequest{
+			Name:              firstNonEmpty(c.OSVolumeName, c.Hostname+"-os"),
+			Size:              c.OSVolumeSize,
+			OnSpotDiscontinue: c.OSVolumeSpotBehavior,
+		}
+	}
+	for _, volume := range c.Volumes {
+		req.Volumes = append(req.Volumes, verda.VolumeCreateRequest{
+			Name:              volume.Name,
+			Size:              volume.Size,
+			Type:              volume.Type,
+			LocationCode:      firstNonEmpty(volume.LocationCode, c.LocationCode),
+			OnSpotDiscontinue: volume.OnSpotDiscontinue,
+		})
+	}
+	return req
+}
+
+func validSpotDiscontinueBehavior(value string) bool {
+	switch value {
+	case "", verda.SpotDiscontinueKeepDetached, verda.SpotDiscontinueMoveToTrash, verda.SpotDiscontinueDeletePermanent:
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Config) shouldCloneOSVolume() bool {

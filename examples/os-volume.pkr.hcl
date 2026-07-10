@@ -46,4 +46,15 @@ build {
       "apt-get update",
     ]
   }
+
+  post-processor "manifest" {
+    output = "packer-manifest.json"
+
+    custom_data = {
+      VolumeID            = build.VolumeID
+      SourceOSVolumeID    = build.SourceOSVolumeID
+      VolumeIDs           = jsonencode(build.VolumeIDs)
+      VolumeIDsByLocation = jsonencode(build.VolumeIDsByLocation)
+    }
+  }
 }

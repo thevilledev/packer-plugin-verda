@@ -13,16 +13,21 @@ import (
 )
 
 type stepCreateClient struct {
-	Config *Config
+	Config        *Config
+	ClientFactory verdaClientFactory
 }
 
 func (s *stepCreateClient) Run(_ context.Context, state multistep.StateBag) multistep.StepAction {
-	client, err := newSDKClient(s.Config)
+	factory := s.ClientFactory
+	if factory == nil {
+		factory = newVerdaClient
+	}
+	client, err := factory(s.Config)
 	if err != nil {
 		state.Put("error", err)
 		return multistep.ActionHalt
 	}
-	putClient(state, sdkClient{client: client})
+	putClient(state, client)
 	return multistep.ActionContinue
 }
 
@@ -56,7 +61,6 @@ func (s *stepCreateSSHKey) Run(ctx context.Context, state multistep.StateBag) mu
 		return multistep.ActionHalt
 	}
 	state.Put(stateKeyCreatedSSHKeyID, key.ID)
-	s.Config.SSHKeyIDs = append([]string{key.ID}, s.Config.SSHKeyIDs...)
 	return multistep.ActionContinue
 }
 
@@ -110,7 +114,6 @@ func (s *stepCreateStartupScript) Run(ctx context.Context, state multistep.State
 		return multistep.ActionHalt
 	}
 	state.Put(stateKeyCreatedScriptID, script.ID)
-	s.Config.StartupScriptID = script.ID
 	return multistep.ActionContinue
 }
 
@@ -137,41 +140,10 @@ func (s *stepCreateInstance) Run(ctx context.Context, state multistep.StateBag) 
 	ui := state.Get("ui").(packer.Ui)
 	ui.Say("Creating Verda instance...")
 
-	req := verda.CreateInstanceRequest{
-		InstanceType:    s.Config.InstanceType,
-		Image:           s.Config.Image,
-		Hostname:        s.Config.Hostname,
-		Description:     s.Config.Description,
-		SSHKeyIDs:       s.Config.SSHKeyIDs,
-		LocationCode:    s.Config.LocationCode,
-		Contract:        s.Config.Contract,
-		Pricing:         s.Config.Pricing,
-		ExistingVolumes: s.Config.ExistingVolumeIDs,
-		IsSpot:          s.Config.IsSpot,
-		Volumes:         make([]verda.VolumeCreateRequest, 0, len(s.Config.Volumes)),
-	}
-	if s.Config.StartupScriptID != "" {
-		req.StartupScriptID = &s.Config.StartupScriptID
-	}
-	if s.Config.Coupon != "" {
-		req.Coupon = &s.Config.Coupon
-	}
-	if s.Config.OSVolumeName != "" || s.Config.OSVolumeSize > 0 {
-		req.OSVolume = &verda.OSVolumeCreateRequest{
-			Name:              firstNonEmpty(s.Config.OSVolumeName, s.Config.Hostname+"-os"),
-			Size:              s.Config.OSVolumeSize,
-			OnSpotDiscontinue: s.Config.OSVolumeSpotBehavior,
-		}
-	}
-	for _, volume := range s.Config.Volumes {
-		req.Volumes = append(req.Volumes, verda.VolumeCreateRequest{
-			Name:              volume.Name,
-			Size:              volume.Size,
-			Type:              volume.Type,
-			LocationCode:      firstNonEmpty(volume.LocationCode, s.Config.LocationCode),
-			OnSpotDiscontinue: volume.OnSpotDiscontinue,
-		})
-	}
+	req := s.Config.instanceRequest(
+		createdSSHKeyIDFromState(state),
+		createdStartupScriptIDFromState(state),
+	)
 
 	instance, err := getClient(state).CreateInstance(ctx, req)
 	if err != nil {
@@ -186,6 +158,9 @@ func (s *stepCreateInstance) Run(ctx context.Context, state multistep.StateBag) 
 func (s *stepCreateInstance) Cleanup(state multistep.StateBag) {
 	current, ok := instanceFromState(state)
 	if !ok || current.ID == "" || s.Config.KeepInstance {
+		return
+	}
+	if s.Config.ArtifactType == artifactTypeInstance && buildComplete(state) {
 		return
 	}
 	ui := state.Get("ui").(packer.Ui)
@@ -211,38 +186,38 @@ func (s *stepWaitForInstance) Run(ctx context.Context, state multistep.StateBag)
 	}
 
 	ui := state.Get("ui").(packer.Ui)
-	deadline := time.NewTimer(s.Config.InstanceTimeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(s.Config.PollInterval)
-	defer ticker.Stop()
-
-	ui.Say("Waiting for Verda instance to become reachable...")
-	for {
-		instance, err := getClient(state).GetInstance(ctx, current.ID)
-		if err != nil {
-			state.Put("error", fmt.Errorf("waiting for instance %s: %w", current.ID, err))
-			return multistep.ActionHalt
-		}
-		current = saveInstanceState(state, instance)
-		if current.IP != "" && statusAllowed(current.Status, s.Config.AllowedSSHStatuses) {
-			ui.Say(fmt.Sprintf("Instance %s is %s at %s", current.ID, current.Status, current.IP))
-			return multistep.ActionContinue
-		}
-		if isTerminalStatus(current.Status) {
-			state.Put("error", fmt.Errorf("instance %s reached terminal status %q", current.ID, current.Status))
-			return multistep.ActionHalt
-		}
-
-		select {
-		case <-ctx.Done():
-			state.Put("error", ctx.Err())
-			return multistep.ActionHalt
-		case <-deadline.C:
-			state.Put("error", fmt.Errorf("timeout waiting for instance %s to become reachable", current.ID))
-			return multistep.ActionHalt
-		case <-ticker.C:
-		}
+	requiresIP := s.Config.Comm.Type == "ssh"
+	ui.Say("Waiting for Verda instance to become ready...")
+	ready, err := pollUntil(
+		ctx,
+		s.Config.InstanceTimeout,
+		s.Config.PollInterval,
+		func(ctx context.Context) (instanceState, bool, error) {
+			instance, err := getClient(state).GetInstance(ctx, current.ID)
+			if err != nil {
+				return instanceState{}, false, fmt.Errorf("waiting for instance %s: %w", current.ID, err)
+			}
+			latest := saveInstanceState(state, instance)
+			if isTerminalStatus(latest.Status) {
+				return instanceState{}, false, fmt.Errorf("instance %s reached terminal status %q", latest.ID, latest.Status)
+			}
+			statusReady := statusAllowed(latest.Status, s.Config.AllowedSSHStatuses)
+			return latest, statusReady && (!requiresIP || latest.IP != ""), nil
+		},
+		func() error {
+			return fmt.Errorf("timeout waiting for instance %s to become ready", current.ID)
+		},
+	)
+	if err != nil {
+		state.Put("error", err)
+		return multistep.ActionHalt
 	}
+	message := fmt.Sprintf("Instance %s is %s", ready.ID, ready.Status)
+	if ready.IP != "" {
+		message += " at " + ready.IP
+	}
+	ui.Say(message)
+	return multistep.ActionContinue
 }
 
 func (s *stepWaitForInstance) Cleanup(multistep.StateBag) {}
@@ -302,10 +277,12 @@ func (s *stepCreateOSVolumeArtifact) Run(ctx context.Context, state multistep.St
 		sourceLocation := firstNonEmpty(sourceVolume.Location, current.Location, s.Config.LocationCode, defaultLocationCode)
 		locations = artifactVolumeLocationsWithSource(locations, sourceLocation)
 		sourceType := firstNonEmpty(sourceVolume.Type, verda.VolumeTypeNVMe)
-		seedName := name
+		// Verda rejects cross-datacenter clones of an OS volume that is still
+		// attached to an instance. Create and detach the local artifact first,
+		// then use it as the source for the remaining locations.
 		ui.Say(fmt.Sprintf("Cloning Verda OS volume for artifact in %s...", sourceLocation))
 		seedID, err := client.CloneVolume(ctx, current.OSVolumeID, volumeCloneRequest{
-			Name:         seedName,
+			Name:         name,
 			LocationCode: sourceLocation,
 			Type:         sourceType,
 		})
@@ -316,12 +293,12 @@ func (s *stepCreateOSVolumeArtifact) Run(ctx context.Context, state multistep.St
 		rememberCreatedArtifactVolume(state, seedID)
 		seed := volumeReplicaState{
 			ID:       seedID,
-			Name:     seedName,
+			Name:     name,
 			Location: sourceLocation,
 			Cloned:   true,
 		}
 		ui.Say(fmt.Sprintf("Created OS volume artifact %s in %s", seedID, sourceLocation))
-		sdkVolume, err := waitForVolumeReady(ctx, client, seedID, s.Config)
+		sdkVolume, err := waitForVolumeStatuses(ctx, client, seedID, s.Config, verda.VolumeStatusDetached)
 		if err != nil {
 			state.Put("error", err)
 			return multistep.ActionHalt
@@ -332,16 +309,14 @@ func (s *stepCreateOSVolumeArtifact) Run(ctx context.Context, state multistep.St
 
 		replicas := make([]volumeReplicaState, 0, len(locations))
 		for _, location := range locations {
-			cloneName := name
 			if strings.EqualFold(location, sourceLocation) {
-				seed.Name = firstNonEmpty(seed.Name, cloneName)
 				replicas = append(replicas, seed)
 				continue
 			}
 
 			ui.Say(fmt.Sprintf("Cloning Verda OS volume for artifact in %s...", location))
 			clonedID, err := client.CloneVolume(ctx, seed.ID, volumeCloneRequest{
-				Name:         cloneName,
+				Name:         name,
 				LocationCode: location,
 				Type:         sourceType,
 			})
@@ -352,7 +327,7 @@ func (s *stepCreateOSVolumeArtifact) Run(ctx context.Context, state multistep.St
 			rememberCreatedArtifactVolume(state, clonedID)
 			replicas = append(replicas, volumeReplicaState{
 				ID:       clonedID,
-				Name:     cloneName,
+				Name:     name,
 				Location: location,
 				Cloned:   true,
 			})
@@ -381,11 +356,14 @@ func (s *stepCreateOSVolumeArtifact) Run(ctx context.Context, state multistep.St
 		volume.Replicas = replicas
 	} else {
 		ui.Say(fmt.Sprintf("Using source OS volume %s as artifact", current.OSVolumeID))
-		if sdkVolume, err := waitForVolumeReady(ctx, client, volume.ID, s.Config); err == nil {
-			volume.Name = firstNonEmpty(volume.Name, sdkVolume.Name)
-			volume.Location = firstNonEmpty(volume.Location, sdkVolume.Location)
-			volume.Status = sdkVolume.Status
+		sdkVolume, err := waitForVolumeReady(ctx, client, volume.ID, s.Config)
+		if err != nil {
+			state.Put("error", err)
+			return multistep.ActionHalt
 		}
+		volume.Name = firstNonEmpty(volume.Name, sdkVolume.Name)
+		volume.Location = firstNonEmpty(volume.Location, sdkVolume.Location)
+		volume.Status = sdkVolume.Status
 		volume.Replicas = []volumeReplicaState{{
 			ID:       volume.ID,
 			Name:     volume.Name,
@@ -403,7 +381,7 @@ func (s *stepCreateOSVolumeArtifact) Cleanup(state multistep.StateBag) {
 	if s.Config.ArtifactType != artifactTypeOSVolume || !s.Config.shouldCloneOSVolume() {
 		return
 	}
-	if _, ok := volumeArtifactFromState(state); ok {
+	if buildComplete(state) {
 		return
 	}
 
@@ -431,12 +409,25 @@ func rememberCreatedArtifactVolume(state multistep.StateBag, id string) {
 }
 
 func shouldPreserveSourceOSVolume(config *Config, state multistep.StateBag, current instanceState) bool {
-	if config.ArtifactType != artifactTypeOSVolume || config.shouldCloneOSVolume() {
+	if !buildComplete(state) || config.ArtifactType != artifactTypeOSVolume || config.shouldCloneOSVolume() {
 		return false
 	}
 	volume, ok := volumeArtifactFromState(state)
 	return ok && volume.ID == current.OSVolumeID
 }
+
+type stepMarkBuildComplete struct{}
+
+func (s *stepMarkBuildComplete) Run(ctx context.Context, state multistep.StateBag) multistep.StepAction {
+	if err := ctx.Err(); err != nil {
+		state.Put("error", err)
+		return multistep.ActionHalt
+	}
+	state.Put(stateKeyBuildComplete, true)
+	return multistep.ActionContinue
+}
+
+func (s *stepMarkBuildComplete) Cleanup(multistep.StateBag) {}
 
 func artifactVolumeLocations(config *Config, fallback string) []string {
 	if len(config.ArtifactVolumeLocationCodes) > 0 {
@@ -458,58 +449,98 @@ func artifactVolumeLocationsWithSource(locations []string, sourceLocation string
 }
 
 func waitForInstanceStatuses(ctx context.Context, client verdaClient, id string, config *Config, statuses ...string) (*verda.Instance, error) {
-	deadline := time.NewTimer(config.InstanceTimeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(config.PollInterval)
-	defer ticker.Stop()
-
-	for {
-		instance, err := client.GetInstance(ctx, id)
-		if err != nil {
-			return nil, fmt.Errorf("waiting for instance %s: %w", id, err)
-		}
-		for _, status := range statuses {
-			if strings.EqualFold(instance.Status, status) {
-				return instance, nil
+	return pollUntil(
+		ctx,
+		config.InstanceTimeout,
+		config.PollInterval,
+		func(ctx context.Context) (*verda.Instance, bool, error) {
+			instance, err := client.GetInstance(ctx, id)
+			if err != nil {
+				return nil, false, fmt.Errorf("waiting for instance %s: %w", id, err)
 			}
-		}
-		if isTerminalStatus(instance.Status) && !statusAllowed(instance.Status, statuses) {
-			return nil, fmt.Errorf("instance %s reached terminal status %q", id, instance.Status)
-		}
-
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-deadline.C:
-			return nil, fmt.Errorf("timeout waiting for instance %s to reach %s", id, strings.Join(statuses, ", "))
-		case <-ticker.C:
-		}
-	}
+			if statusAllowed(instance.Status, statuses) {
+				return instance, true, nil
+			}
+			if isTerminalStatus(instance.Status) {
+				return nil, false, fmt.Errorf("instance %s reached terminal status %q", id, instance.Status)
+			}
+			return nil, false, nil
+		},
+		func() error {
+			return fmt.Errorf("timeout waiting for instance %s to reach %s", id, strings.Join(statuses, ", "))
+		},
+	)
 }
 
 func waitForVolumeReady(ctx context.Context, client verdaClient, id string, config *Config) (*verda.Volume, error) {
-	deadline := time.NewTimer(config.InstanceTimeout)
+	return waitForVolumeStatuses(
+		ctx,
+		client,
+		id,
+		config,
+		verda.VolumeStatusCreated,
+		verda.VolumeStatusDetached,
+		verda.VolumeStatusAttached,
+	)
+}
+
+func waitForVolumeStatuses(
+	ctx context.Context,
+	client verdaClient,
+	id string,
+	config *Config,
+	statuses ...string,
+) (*verda.Volume, error) {
+	return pollUntil(
+		ctx,
+		config.InstanceTimeout,
+		config.PollInterval,
+		func(ctx context.Context) (*verda.Volume, bool, error) {
+			volume, err := client.GetVolume(ctx, id)
+			if err != nil {
+				return nil, false, fmt.Errorf("waiting for volume %s: %w", id, err)
+			}
+			if statusAllowed(volume.Status, statuses) {
+				return volume, true, nil
+			}
+			switch strings.ToLower(volume.Status) {
+			case verda.VolumeStatusDeleted, verda.VolumeStatusDeleting, verda.VolumeStatusCanceled:
+				return nil, false, fmt.Errorf("volume %s reached terminal status %q", id, volume.Status)
+			}
+			return nil, false, nil
+		},
+		func() error {
+			return fmt.Errorf("timeout waiting for volume %s to reach %s", id, strings.Join(statuses, ", "))
+		},
+	)
+}
+
+func pollUntil[T any](
+	ctx context.Context,
+	timeout time.Duration,
+	interval time.Duration,
+	check func(context.Context) (T, bool, error),
+	timeoutError func() error,
+) (T, error) {
+	var zero T
+	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
-	ticker := time.NewTicker(config.PollInterval)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
-		volume, err := client.GetVolume(ctx, id)
+		value, done, err := check(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("waiting for volume %s: %w", id, err)
+			return zero, err
 		}
-		switch strings.ToLower(volume.Status) {
-		case verda.VolumeStatusCreated, verda.VolumeStatusDetached, verda.VolumeStatusAttached:
-			return volume, nil
-		case verda.VolumeStatusDeleted, verda.VolumeStatusDeleting, verda.VolumeStatusCanceled:
-			return nil, fmt.Errorf("volume %s reached terminal status %q", id, volume.Status)
+		if done {
+			return value, nil
 		}
-
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return zero, ctx.Err()
 		case <-deadline.C:
-			return nil, fmt.Errorf("timeout waiting for volume %s to become ready", id)
+			return zero, timeoutError()
 		case <-ticker.C:
 		}
 	}
@@ -526,7 +557,7 @@ func statusAllowed(status string, allowed []string) bool {
 
 func isTerminalStatus(status string) bool {
 	switch strings.ToLower(status) {
-	case "error", "notfound", "deleting", "deleted", "discontinued", "no_capacity":
+	case verda.StatusError, verda.StatusNotFound, verda.StatusDeleting, "deleted", verda.StatusDiscontinued, verda.StatusNoCapacity:
 		return true
 	default:
 		return false

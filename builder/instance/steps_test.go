@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -12,45 +13,61 @@ import (
 )
 
 type fakeClient struct {
-	createSSHKeyReq      *verda.CreateSSHKeyRequest
-	deleteSSHKeyID       string
-	createScriptReq      *verda.CreateStartupScriptRequest
-	deleteScriptID       string
-	createInstanceReq    *verda.CreateInstanceRequest
-	deleteInstanceID     string
-	deleteVolumeIDs      []string
-	deletePermanently    bool
-	shutdownInstanceID   string
-	getVolumeCallCount   int
-	cloneVolumeSourceID  string
-	cloneVolumeSourceIDs []string
-	cloneVolumeReq       *volumeCloneRequest
-	cloneVolumeReqs      []volumeCloneRequest
-	cloneVolumeIDs       []string
-	cloneVolumeErrs      []error
-	deleteVolumeID       string
-	deleteVolumeForce    bool
-	deleteVolumeCallIDs  []string
-	instances            []*verda.Instance
-	volumes              []*verda.Volume
-	getInstanceCallCount int
-	createInstanceErr    error
+	createSSHKeyReq       *verda.CreateSSHKeyRequest
+	deleteSSHKeyID        string
+	createScriptReq       *verda.CreateStartupScriptRequest
+	deleteScriptID        string
+	createInstanceReq     *verda.CreateInstanceRequest
+	deleteInstanceID      string
+	deleteVolumeIDs       []string
+	deletePermanently     bool
+	shutdownInstanceID    string
+	cloneVolumeSourceID   string
+	cloneVolumeSourceIDs  []string
+	cloneVolumeReq        *volumeCloneRequest
+	cloneVolumeReqs       []volumeCloneRequest
+	cloneVolumeIDs        []string
+	cloneVolumeErrs       []error
+	deleteVolumeID        string
+	deleteVolumeForce     bool
+	deleteVolumeCallIDs   []string
+	deleteInstanceCallIDs []string
+	instancesByID         map[string][]*verda.Instance
+	volumesByID           map[string][]*verda.Volume
+	getInstanceCallsByID  map[string]int
+	getVolumeCallsByID    map[string]int
+	createInstanceErr     error
+	deleteInstanceErr     error
+	getVolumeErr          error
+	deleteVolumeErrs      map[string]error
+	createInstanceFn      func(context.Context, verda.CreateInstanceRequest) (*verda.Instance, error)
+	createInstanceReqs    []verda.CreateInstanceRequest
+	createSSHKeyIDs       []string
+	createSSHKeyCount     int
 }
 
-func (f *fakeClient) GetInstance(context.Context, string) (*verda.Instance, error) {
-	if len(f.instances) == 0 {
+func (f *fakeClient) GetInstance(_ context.Context, id string) (*verda.Instance, error) {
+	instances := f.instancesByID[id]
+	if len(instances) == 0 {
 		return nil, errors.New("no fake instances configured")
 	}
-	idx := f.getInstanceCallCount
-	if idx >= len(f.instances) {
-		idx = len(f.instances) - 1
+	if f.getInstanceCallsByID == nil {
+		f.getInstanceCallsByID = make(map[string]int)
 	}
-	f.getInstanceCallCount++
-	return f.instances[idx], nil
+	idx := f.getInstanceCallsByID[id]
+	if idx >= len(instances) {
+		idx = len(instances) - 1
+	}
+	f.getInstanceCallsByID[id]++
+	return instances[idx], nil
 }
 
-func (f *fakeClient) CreateInstance(_ context.Context, req verda.CreateInstanceRequest) (*verda.Instance, error) {
+func (f *fakeClient) CreateInstance(ctx context.Context, req verda.CreateInstanceRequest) (*verda.Instance, error) {
 	f.createInstanceReq = &req
+	f.createInstanceReqs = append(f.createInstanceReqs, req)
+	if f.createInstanceFn != nil {
+		return f.createInstanceFn(ctx, req)
+	}
 	if f.createInstanceErr != nil {
 		return nil, f.createInstanceErr
 	}
@@ -68,9 +85,10 @@ func (f *fakeClient) CreateInstance(_ context.Context, req verda.CreateInstanceR
 
 func (f *fakeClient) DeleteInstance(_ context.Context, id string, volumeIDs []string, deletePermanently bool) error {
 	f.deleteInstanceID = id
+	f.deleteInstanceCallIDs = append(f.deleteInstanceCallIDs, id)
 	f.deleteVolumeIDs = volumeIDs
 	f.deletePermanently = deletePermanently
-	return nil
+	return f.deleteInstanceErr
 }
 
 func (f *fakeClient) ShutdownInstance(_ context.Context, id string) error {
@@ -79,7 +97,11 @@ func (f *fakeClient) ShutdownInstance(_ context.Context, id string) error {
 }
 
 func (f *fakeClient) GetVolume(_ context.Context, id string) (*verda.Volume, error) {
-	if len(f.volumes) == 0 {
+	if f.getVolumeErr != nil {
+		return nil, f.getVolumeErr
+	}
+	volumes := f.volumesByID[id]
+	if len(volumes) == 0 {
 		return &verda.Volume{
 			ID:       id,
 			Name:     "volume-" + id,
@@ -87,12 +109,15 @@ func (f *fakeClient) GetVolume(_ context.Context, id string) (*verda.Volume, err
 			Location: "FIN-03",
 		}, nil
 	}
-	idx := f.getVolumeCallCount
-	if idx >= len(f.volumes) {
-		idx = len(f.volumes) - 1
+	if f.getVolumeCallsByID == nil {
+		f.getVolumeCallsByID = make(map[string]int)
 	}
-	f.getVolumeCallCount++
-	return f.volumes[idx], nil
+	idx := f.getVolumeCallsByID[id]
+	if idx >= len(volumes) {
+		idx = len(volumes) - 1
+	}
+	f.getVolumeCallsByID[id]++
+	return volumes[idx], nil
 }
 
 func (f *fakeClient) CloneVolume(_ context.Context, id string, req volumeCloneRequest) (string, error) {
@@ -122,12 +147,21 @@ func (f *fakeClient) DeleteVolume(_ context.Context, id string, force bool) erro
 	f.deleteVolumeID = id
 	f.deleteVolumeForce = force
 	f.deleteVolumeCallIDs = append(f.deleteVolumeCallIDs, id)
-	return nil
+	return f.deleteVolumeErrs[id]
 }
 
 func (f *fakeClient) CreateSSHKey(_ context.Context, req verda.CreateSSHKeyRequest) (*verda.SSHKey, error) {
 	f.createSSHKeyReq = &req
-	return &verda.SSHKey{ID: "key-1", Name: req.Name}, nil
+	id := "key-1"
+	if len(f.createSSHKeyIDs) > 0 {
+		idx := f.createSSHKeyCount
+		if idx >= len(f.createSSHKeyIDs) {
+			idx = len(f.createSSHKeyIDs) - 1
+		}
+		id = f.createSSHKeyIDs[idx]
+	}
+	f.createSSHKeyCount++
+	return &verda.SSHKey{ID: id, Name: req.Name}, nil
 }
 
 func (f *fakeClient) DeleteSSHKey(_ context.Context, id string) error {
@@ -165,8 +199,11 @@ func TestStepCreateSSHKey(t *testing.T) {
 	if client.createSSHKeyReq.PublicKey != "ssh-rsa AAAA packer-key" {
 		t.Fatalf("PublicKey = %q", client.createSSHKeyReq.PublicKey)
 	}
-	if got := cfg.SSHKeyIDs[0]; got != "key-1" {
-		t.Fatalf("SSHKeyIDs[0] = %q", got)
+	if got := createdSSHKeyIDFromState(state); got != "key-1" {
+		t.Fatalf("created SSH key ID = %q", got)
+	}
+	if len(cfg.SSHKeyIDs) != 0 {
+		t.Fatalf("SSHKeyIDs mutated to %#v", cfg.SSHKeyIDs)
 	}
 
 	step.Cleanup(state)
@@ -192,8 +229,38 @@ func TestStepCreateSSHKeyWithNoneCommunicator(t *testing.T) {
 	if client.createSSHKeyReq == nil {
 		t.Fatal("expected SSH key creation")
 	}
-	if got := cfg.SSHKeyIDs[0]; got != "key-1" {
-		t.Fatalf("SSHKeyIDs[0] = %q", got)
+	if got := createdSSHKeyIDFromState(state); got != "key-1" {
+		t.Fatalf("created SSH key ID = %q", got)
+	}
+}
+
+func TestStepCreateStartupScriptStoresRunStateWithoutMutatingConfig(t *testing.T) {
+	cfg := &Config{
+		StartupScript:       "#!/bin/sh\necho ready\n",
+		StartupScriptName:   "packer-startup",
+		DeleteStartupScript: true,
+	}
+	client := &fakeClient{}
+	state := testState(client)
+	step := &stepCreateStartupScript{Config: cfg}
+
+	if action := step.Run(context.Background(), state); action != multistep.ActionContinue {
+		t.Fatalf("action = %v", action)
+	}
+	if got := createdStartupScriptIDFromState(state); got != "script-1" {
+		t.Fatalf("created startup script ID = %q", got)
+	}
+	if cfg.StartupScriptID != "" {
+		t.Fatalf("StartupScriptID mutated to %q", cfg.StartupScriptID)
+	}
+	req := cfg.instanceRequest("", createdStartupScriptIDFromState(state))
+	if req.StartupScriptID == nil || *req.StartupScriptID != "script-1" {
+		t.Fatalf("request StartupScriptID = %#v", req.StartupScriptID)
+	}
+
+	step.Cleanup(state)
+	if client.deleteScriptID != "script-1" {
+		t.Fatalf("deleteScriptID = %q", client.deleteScriptID)
 	}
 }
 
@@ -249,13 +316,15 @@ func TestStepCreateOSVolumeArtifactClonesSourceVolume(t *testing.T) {
 	ip := "203.0.113.10"
 	osVolumeID := "vol-os"
 	client := &fakeClient{
-		instances: []*verda.Instance{
-			{ID: "inst-1", Status: verda.StatusOffline, IP: &ip, OSVolumeID: &osVolumeID},
+		instancesByID: map[string][]*verda.Instance{
+			"inst-1": {{ID: "inst-1", Status: verda.StatusOffline, IP: &ip, OSVolumeID: &osVolumeID}},
 		},
-		volumes: []*verda.Volume{
-			{ID: "vol-os", Name: "source-volume", Type: verda.VolumeTypeNVMe, Status: verda.VolumeStatusAttached, Location: "FIN-03"},
-			{ID: "vol-cloned", Name: "artifact-volume", Status: verda.VolumeStatusCloning, Location: "FIN-03"},
-			{ID: "vol-cloned", Name: "artifact-volume", Status: verda.VolumeStatusDetached, Location: "FIN-03"},
+		volumesByID: map[string][]*verda.Volume{
+			"vol-os": {{ID: "vol-os", Name: "source-volume", Type: verda.VolumeTypeNVMe, Status: verda.VolumeStatusAttached, Location: "FIN-03"}},
+			"vol-cloned": {
+				{ID: "vol-cloned", Name: "artifact-volume", Status: verda.VolumeStatusCloning, Location: "FIN-03"},
+				{ID: "vol-cloned", Name: "artifact-volume", Status: verda.VolumeStatusDetached, Location: "FIN-03"},
+			},
 		},
 	}
 	state := testState(client)
@@ -301,15 +370,19 @@ func TestStepCreateOSVolumeArtifactClonesToMultipleLocations(t *testing.T) {
 	osVolumeID := "vol-os"
 	client := &fakeClient{
 		cloneVolumeIDs: []string{"vol-fin-01", "vol-fin-03"},
-		instances: []*verda.Instance{
-			{ID: "inst-1", Status: verda.StatusOffline, IP: &ip, OSVolumeID: &osVolumeID},
+		instancesByID: map[string][]*verda.Instance{
+			"inst-1": {{ID: "inst-1", Status: verda.StatusOffline, IP: &ip, OSVolumeID: &osVolumeID}},
 		},
-		volumes: []*verda.Volume{
-			{ID: "vol-os", Name: "source-volume", Type: verda.VolumeTypeNVMe, Status: verda.VolumeStatusAttached, Location: "FIN-01"},
-			{ID: "vol-fin-01", Name: "artifact-volume", Status: verda.VolumeStatusCloning, Location: "FIN-01"},
-			{ID: "vol-fin-01", Name: "artifact-volume", Status: verda.VolumeStatusDetached, Location: "FIN-01"},
-			{ID: "vol-fin-03", Name: "artifact-volume", Status: verda.VolumeStatusCloning, Location: "FIN-03"},
-			{ID: "vol-fin-03", Name: "artifact-volume", Status: verda.VolumeStatusDetached, Location: "FIN-03"},
+		volumesByID: map[string][]*verda.Volume{
+			"vol-os": {{ID: "vol-os", Name: "source-volume", Type: verda.VolumeTypeNVMe, Status: verda.VolumeStatusAttached, Location: "FIN-01"}},
+			"vol-fin-01": {
+				{ID: "vol-fin-01", Name: "artifact-volume", Status: verda.VolumeStatusCloning, Location: "FIN-01"},
+				{ID: "vol-fin-01", Name: "artifact-volume", Status: verda.VolumeStatusDetached, Location: "FIN-01"},
+			},
+			"vol-fin-03": {
+				{ID: "vol-fin-03", Name: "artifact-volume", Status: verda.VolumeStatusCloning, Location: "FIN-03"},
+				{ID: "vol-fin-03", Name: "artifact-volume", Status: verda.VolumeStatusDetached, Location: "FIN-03"},
+			},
 		},
 	}
 	state := testState(client)
@@ -342,6 +415,9 @@ func TestStepCreateOSVolumeArtifactClonesToMultipleLocations(t *testing.T) {
 		client.cloneVolumeReqs[1].LocationCode != "FIN-03" {
 		t.Fatalf("cloneVolumeReqs = %#v", client.cloneVolumeReqs)
 	}
+	if calls := client.getVolumeCallsByID["vol-fin-01"]; calls != 2 {
+		t.Fatalf("source-location clone lookups = %d, want 2 before fan-out", calls)
+	}
 
 	volume, ok := volumeArtifactFromState(state)
 	if !ok {
@@ -367,14 +443,14 @@ func TestStepCreateOSVolumeArtifactRetainsSourceLocationReplica(t *testing.T) {
 	osVolumeID := "vol-os"
 	client := &fakeClient{
 		cloneVolumeIDs: []string{"vol-fin-03", "vol-fin-01", "vol-fin-02"},
-		instances: []*verda.Instance{
-			{ID: "inst-1", Status: verda.StatusOffline, IP: &ip, OSVolumeID: &osVolumeID},
+		instancesByID: map[string][]*verda.Instance{
+			"inst-1": {{ID: "inst-1", Status: verda.StatusOffline, IP: &ip, OSVolumeID: &osVolumeID}},
 		},
-		volumes: []*verda.Volume{
-			{ID: "vol-os", Name: "source-volume", Type: verda.VolumeTypeNVMe, Status: verda.VolumeStatusAttached, Location: "FIN-03"},
-			{ID: "vol-fin-03", Name: "artifact-volume", Status: verda.VolumeStatusDetached, Location: "FIN-03"},
-			{ID: "vol-fin-01", Name: "artifact-volume", Status: verda.VolumeStatusDetached, Location: "FIN-01"},
-			{ID: "vol-fin-02", Name: "artifact-volume", Status: verda.VolumeStatusDetached, Location: "FIN-02"},
+		volumesByID: map[string][]*verda.Volume{
+			"vol-os":     {{ID: "vol-os", Name: "source-volume", Type: verda.VolumeTypeNVMe, Status: verda.VolumeStatusAttached, Location: "FIN-03"}},
+			"vol-fin-03": {{ID: "vol-fin-03", Name: "artifact-volume", Status: verda.VolumeStatusDetached, Location: "FIN-03"}},
+			"vol-fin-01": {{ID: "vol-fin-01", Name: "artifact-volume", Status: verda.VolumeStatusDetached, Location: "FIN-01"}},
+			"vol-fin-02": {{ID: "vol-fin-02", Name: "artifact-volume", Status: verda.VolumeStatusDetached, Location: "FIN-02"}},
 		},
 	}
 	state := testState(client)
@@ -440,13 +516,13 @@ func TestStepCreateOSVolumeArtifactAddsSourceReplicaToConfiguredLocations(t *tes
 	osVolumeID := "vol-os"
 	client := &fakeClient{
 		cloneVolumeIDs: []string{"vol-fin-03", "vol-fin-02"},
-		instances: []*verda.Instance{
-			{ID: "inst-1", Status: verda.StatusOffline, IP: &ip, OSVolumeID: &osVolumeID},
+		instancesByID: map[string][]*verda.Instance{
+			"inst-1": {{ID: "inst-1", Status: verda.StatusOffline, IP: &ip, OSVolumeID: &osVolumeID}},
 		},
-		volumes: []*verda.Volume{
-			{ID: "vol-os", Name: "source-volume", Type: verda.VolumeTypeNVMe, Status: verda.VolumeStatusAttached, Location: "FIN-03"},
-			{ID: "vol-fin-03", Name: "artifact-volume", Status: verda.VolumeStatusDetached, Location: "FIN-03"},
-			{ID: "vol-fin-02", Name: "artifact-volume", Status: verda.VolumeStatusDetached, Location: "FIN-02"},
+		volumesByID: map[string][]*verda.Volume{
+			"vol-os":     {{ID: "vol-os", Name: "source-volume", Type: verda.VolumeTypeNVMe, Status: verda.VolumeStatusAttached, Location: "FIN-03"}},
+			"vol-fin-03": {{ID: "vol-fin-03", Name: "artifact-volume", Status: verda.VolumeStatusDetached, Location: "FIN-03"}},
+			"vol-fin-02": {{ID: "vol-fin-02", Name: "artifact-volume", Status: verda.VolumeStatusDetached, Location: "FIN-02"}},
 		},
 	}
 	state := testState(client)
@@ -507,14 +583,14 @@ func TestStepCreateOSVolumeArtifactCleanupDeletesPartialClones(t *testing.T) {
 	ip := "203.0.113.10"
 	osVolumeID := "vol-os"
 	client := &fakeClient{
-		cloneVolumeIDs:  []string{"vol-fin-01"},
-		cloneVolumeErrs: []error{nil, errors.New("cross-location clone failed")},
-		instances: []*verda.Instance{
-			{ID: "inst-1", Status: verda.StatusOffline, IP: &ip, OSVolumeID: &osVolumeID},
+		cloneVolumeIDs:  []string{"vol-fin-01", "vol-fin-02"},
+		cloneVolumeErrs: []error{nil, nil, errors.New("cross-location clone failed")},
+		instancesByID: map[string][]*verda.Instance{
+			"inst-1": {{ID: "inst-1", Status: verda.StatusOffline, IP: &ip, OSVolumeID: &osVolumeID}},
 		},
-		volumes: []*verda.Volume{
-			{ID: "vol-os", Name: "source-volume", Type: verda.VolumeTypeNVMe, Status: verda.VolumeStatusAttached, Location: "FIN-01"},
-			{ID: "vol-fin-01", Name: "artifact-volume", Status: verda.VolumeStatusDetached, Location: "FIN-01"},
+		volumesByID: map[string][]*verda.Volume{
+			"vol-os":     {{ID: "vol-os", Name: "source-volume", Type: verda.VolumeTypeNVMe, Status: verda.VolumeStatusAttached, Location: "FIN-01"}},
+			"vol-fin-01": {{ID: "vol-fin-01", Name: "artifact-volume", Status: verda.VolumeStatusDetached, Location: "FIN-01"}},
 		},
 	}
 	state := testState(client)
@@ -525,7 +601,7 @@ func TestStepCreateOSVolumeArtifactCleanupDeletesPartialClones(t *testing.T) {
 			ArtifactType:                artifactTypeOSVolume,
 			CloneOSVolume:               &clone,
 			ArtifactVolumeName:          "artifact-volume",
-			ArtifactVolumeLocationCodes: []string{"FIN-01", "FIN-03"},
+			ArtifactVolumeLocationCodes: []string{"FIN-01", "FIN-02", "FIN-03"},
 			PollInterval:                time.Millisecond,
 			InstanceTimeout:             time.Second,
 		},
@@ -533,9 +609,100 @@ func TestStepCreateOSVolumeArtifactCleanupDeletesPartialClones(t *testing.T) {
 	if action := step.Run(context.Background(), state); action != multistep.ActionHalt {
 		t.Fatalf("action = %v, err = %v", action, state.Get("error"))
 	}
+	if len(client.cloneVolumeSourceIDs) != 3 ||
+		client.cloneVolumeSourceIDs[0] != osVolumeID ||
+		client.cloneVolumeSourceIDs[1] != "vol-fin-01" ||
+		client.cloneVolumeSourceIDs[2] != "vol-fin-01" {
+		t.Fatalf("cloneVolumeSourceIDs = %#v", client.cloneVolumeSourceIDs)
+	}
+	if _, ok := volumeArtifactFromState(state); ok {
+		t.Fatal("unexpected promoted volume artifact after clone failure")
+	}
 
 	step.Cleanup(state)
-	if len(client.deleteVolumeCallIDs) != 1 || client.deleteVolumeCallIDs[0] != "vol-fin-01" {
+	if !reflect.DeepEqual(client.deleteVolumeCallIDs, []string{"vol-fin-01", "vol-fin-02"}) {
+		t.Fatalf("deleted volumes = %#v", client.deleteVolumeCallIDs)
+	}
+}
+
+func TestArtifactVolumeLocationsWithSource(t *testing.T) {
+	tests := []struct {
+		name      string
+		locations []string
+		source    string
+		want      []string
+	}{
+		{
+			name:      "append implicit source",
+			locations: []string{"FIN-02"},
+			source:    "FIN-03",
+			want:      []string{"FIN-02", "FIN-03"},
+		},
+		{
+			name:      "explicit source remains in place",
+			locations: []string{"FIN-02", "FIN-03"},
+			source:    "FIN-03",
+			want:      []string{"FIN-02", "FIN-03"},
+		},
+		{
+			name:      "source comparison is case insensitive",
+			locations: []string{"fin-03", "FIN-02"},
+			source:    "FIN-03",
+			want:      []string{"fin-03", "FIN-02"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := artifactVolumeLocationsWithSource(tt.locations, tt.source)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("locations = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStepCreateOSVolumeArtifactPropagatesUnclonedVolumeError(t *testing.T) {
+	clone := false
+	client := &fakeClient{getVolumeErr: errors.New("volume lookup failed")}
+	state := testState(client)
+	state.Put(stateKeyInstance, instanceState{
+		ID:         "inst-1",
+		Status:     verda.StatusOffline,
+		Location:   "FIN-03",
+		OSVolumeID: "vol-os",
+	})
+
+	step := &stepCreateOSVolumeArtifact{Config: &Config{
+		ArtifactType:               artifactTypeOSVolume,
+		CloneOSVolume:              &clone,
+		SkipShutdownBeforeArtifact: true,
+		PollInterval:               time.Millisecond,
+		InstanceTimeout:            time.Second,
+	}}
+	if action := step.Run(context.Background(), state); action != multistep.ActionHalt {
+		t.Fatalf("action = %v", action)
+	}
+	if _, ok := state.GetOk("error"); !ok {
+		t.Fatal("expected volume lookup error")
+	}
+	if _, ok := volumeArtifactFromState(state); ok {
+		t.Fatal("unexpected volume artifact state after failure")
+	}
+}
+
+func TestStepCreateOSVolumeArtifactCleanupDeletesUnpromotedClones(t *testing.T) {
+	clone := true
+	client := &fakeClient{}
+	state := testState(client)
+	state.Put(stateKeyCreatedArtifactVolumeIDs, []string{"vol-cloned"})
+	saveVolumeArtifactState(state, volumeArtifactState{ID: "vol-cloned", Cloned: true})
+
+	step := &stepCreateOSVolumeArtifact{Config: &Config{
+		ArtifactType:  artifactTypeOSVolume,
+		CloneOSVolume: &clone,
+	}}
+	step.Cleanup(state)
+	if len(client.deleteVolumeCallIDs) != 1 || client.deleteVolumeCallIDs[0] != "vol-cloned" {
 		t.Fatalf("deleted volumes = %#v", client.deleteVolumeCallIDs)
 	}
 }
@@ -546,6 +713,7 @@ func TestStepCreateInstanceCleanupPreservesUnclonedOSVolumeArtifact(t *testing.T
 	state := testState(client)
 	state.Put(stateKeyInstance, instanceState{ID: "inst-1", OSVolumeID: "vol-os"})
 	saveVolumeArtifactState(state, volumeArtifactState{ID: "vol-os", SourceOSVolumeID: "vol-os"})
+	state.Put(stateKeyBuildComplete, true)
 
 	step := &stepCreateInstance{
 		Config: &Config{
@@ -565,12 +733,34 @@ func TestStepCreateInstanceCleanupPreservesUnclonedOSVolumeArtifact(t *testing.T
 	}
 }
 
+func TestStepCreateInstanceCleanupDeletesIncompleteUnclonedOSVolume(t *testing.T) {
+	clone := false
+	client := &fakeClient{}
+	state := testState(client)
+	state.Put(stateKeyInstance, instanceState{ID: "inst-1", OSVolumeID: "vol-os"})
+	saveVolumeArtifactState(state, volumeArtifactState{ID: "vol-os", SourceOSVolumeID: "vol-os"})
+
+	step := &stepCreateInstance{Config: &Config{
+		ArtifactType:  artifactTypeOSVolume,
+		CloneOSVolume: &clone,
+	}}
+	step.Cleanup(state)
+	if client.deleteInstanceID != "inst-1" {
+		t.Fatalf("deleteInstanceID = %q", client.deleteInstanceID)
+	}
+	if client.deleteVolumeIDs != nil {
+		t.Fatalf("deleteVolumeIDs = %#v, want nil API default", client.deleteVolumeIDs)
+	}
+}
+
 func TestStepWaitForInstance(t *testing.T) {
 	ip := "203.0.113.10"
 	client := &fakeClient{
-		instances: []*verda.Instance{
-			{ID: "inst-1", Status: "provisioning"},
-			{ID: "inst-1", Status: "running", IP: &ip, InstanceType: "V100", Location: "FIN-03"},
+		instancesByID: map[string][]*verda.Instance{
+			"inst-1": {
+				{ID: "inst-1", Status: "provisioning"},
+				{ID: "inst-1", Status: "running", IP: &ip, InstanceType: "V100", Location: "FIN-03"},
+			},
 		},
 	}
 	state := testState(client)
@@ -589,6 +779,74 @@ func TestStepWaitForInstance(t *testing.T) {
 	if got := state.Get(stateKeyInstanceIP).(string); got != ip {
 		t.Fatalf("instance ip = %q", got)
 	}
+}
+
+func TestStepWaitForInstanceWithNoneCommunicatorDoesNotRequireIP(t *testing.T) {
+	client := &fakeClient{instancesByID: map[string][]*verda.Instance{
+		"inst-1": {{ID: "inst-1", Status: verda.StatusRunning}},
+	}}
+	state := testState(client)
+	state.Put(stateKeyInstance, instanceState{ID: "inst-1"})
+	cfg := &Config{
+		PollInterval:       time.Millisecond,
+		InstanceTimeout:    time.Second,
+		AllowedSSHStatuses: []string{verda.StatusRunning},
+	}
+	cfg.Comm.Type = "none"
+
+	if action := (&stepWaitForInstance{Config: cfg}).Run(context.Background(), state); action != multistep.ActionContinue {
+		t.Fatalf("action = %v, err = %v", action, state.Get("error"))
+	}
+}
+
+func TestStepWaitForInstanceRejectsTerminalAllowedStatus(t *testing.T) {
+	ip := "203.0.113.10"
+	client := &fakeClient{instancesByID: map[string][]*verda.Instance{
+		"inst-1": {{ID: "inst-1", Status: verda.StatusError, IP: &ip}},
+	}}
+	state := testState(client)
+	state.Put(stateKeyInstance, instanceState{ID: "inst-1"})
+	cfg := &Config{
+		PollInterval:       time.Millisecond,
+		InstanceTimeout:    time.Second,
+		AllowedSSHStatuses: []string{verda.StatusError},
+	}
+	cfg.Comm.Type = "ssh"
+
+	if action := (&stepWaitForInstance{Config: cfg}).Run(context.Background(), state); action != multistep.ActionHalt {
+		t.Fatalf("action = %v", action)
+	}
+}
+
+func TestPollUntilCancellationAndTimeout(t *testing.T) {
+	t.Run("cancelled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := pollUntil(
+			ctx,
+			time.Second,
+			time.Millisecond,
+			func(context.Context) (string, bool, error) { return "", false, nil },
+			func() error { return errors.New("timed out") },
+		)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v, want context.Canceled", err)
+		}
+	})
+
+	t.Run("timeout", func(t *testing.T) {
+		want := errors.New("timed out")
+		_, err := pollUntil(
+			context.Background(),
+			5*time.Millisecond,
+			time.Millisecond,
+			func(context.Context) (string, bool, error) { return "", false, nil },
+			func() error { return want },
+		)
+		if !errors.Is(err, want) {
+			t.Fatalf("error = %v, want timeout error", err)
+		}
+	})
 }
 
 func testState(client verdaClient) multistep.StateBag {

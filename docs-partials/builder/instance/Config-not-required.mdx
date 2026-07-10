@@ -46,13 +46,13 @@
 
 - `artifact_volume_name` (string) - Name for each cloned OS volume artifact.
 
-- `artifact_volume_location_code` (string) - Target location for a cloned OS volume artifact. Defaults to location_code, and the source location is also retained.
+- `artifact_volume_location_code` (string) - Deprecated: use artifact_volume_location_codes. Target location for a cloned OS volume artifact.
 
-- `artifact_volume_location_codes` ([]string) - Target locations for cloned OS volume artifacts. The first location becomes the primary artifact ID, and the source location is also retained.
+- `artifact_volume_location_codes` ([]string) - Target locations for cloned OS volume artifacts. The first location is primary; the effective locations also include the source location exactly once.
 
 - `skip_shutdown_before_artifact` (bool) - Skip shutting down the instance before creating an OS volume artifact.
 
-- `keep_instance` (bool) - Keep the created instance after the build. By default the instance is deleted during cleanup.
+- `keep_instance` (bool) - Keep the build instance during failed-build cleanup and when Packer destroys the returned instance artifact.
 
 - `delete_permanently` (bool) - Permanently delete resources during cleanup instead of moving them to a recoverable state.
 

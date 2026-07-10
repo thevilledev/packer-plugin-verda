@@ -28,6 +28,8 @@ type verdaClient interface {
 	DeleteStartupScript(context.Context, string) error
 }
 
+type verdaClientFactory func(*Config) (verdaClient, error)
+
 type volumeCloneRequest struct {
 	Name         string
 	LocationCode string
@@ -58,6 +60,14 @@ func newSDKClient(config *Config) (*verda.Client, error) {
 		options = append(options, verda.WithBaseURL(config.BaseURL))
 	}
 	return verda.NewClient(options...)
+}
+
+func newVerdaClient(config *Config) (verdaClient, error) {
+	client, err := newSDKClient(config)
+	if err != nil {
+		return nil, err
+	}
+	return sdkClient{client: client}, nil
 }
 
 func (c sdkClient) GetInstance(ctx context.Context, id string) (*verda.Instance, error) {
@@ -95,6 +105,10 @@ func (c sdkClient) CloneVolume(ctx context.Context, id string, req volumeCloneRe
 		return "", fmt.Errorf("volume clone name is required")
 	}
 
+	// The SDK's clone helper currently puts the destination location in the
+	// "type" field and cannot send the source volume type together with
+	// "location_code". Keep this narrow adapter until the SDK request type can
+	// express the API payload used here.
 	return withAuthRetry(c.client, func() (string, error) {
 		bodyBytes, err := json.Marshal(volumeCloneActionRequest{
 			ID:           id,

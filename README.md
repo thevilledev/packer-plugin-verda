@@ -62,6 +62,10 @@ build {
 
 To produce a reusable OS volume instead of an instance artifact, set `artifact_type = "os_volume"`. The artifact ID can then be used as the Verda instance `image` value in Terraform or another API client.
 
+Multi-location OS volume builds print every location and volume ID. The OS volume example also writes `VolumeIDsByLocation` to `packer-manifest.json` for machine-readable handoff.
+
+The default instance artifact remains live after a successful build. If Packer later destroys that artifact, the plugin deletes the instance; set `keep_instance = true` to retain it even then. For OS volume artifacts, the temporary build instance is deleted after capture unless `keep_instance` is enabled.
+
 
 > [!NOTE]
 > This step requires extra steps - see [examples/README.md](examples/README.md).

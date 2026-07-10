@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // DeleteConfig controls artifact destruction behavior.
@@ -37,6 +38,45 @@ type Artifact struct {
 	StateData           map[string]interface{}
 }
 
+func newArtifact(client verdaClient, config *Config, instance instanceState, volume *volumeArtifactState) *Artifact {
+	artifact := &Artifact{
+		Client:       client,
+		ArtifactType: config.ArtifactType,
+		InstanceID:   instance.ID,
+		InstanceIP:   instance.IP,
+		Status:       instance.Status,
+		Location:     instance.Location,
+		InstanceType: instance.InstanceType,
+		OSVolumeID:   instance.OSVolumeID,
+		KeepInstance: config.KeepInstance,
+		DeleteConfig: DeleteConfig{
+			VolumeIDs:         append([]string(nil), config.VolumeIDsToDelete...),
+			DeletePermanently: config.DeletePermanently,
+			DeleteOnDestroy:   !config.KeepInstance,
+		},
+		StateData: generatedData(instance),
+	}
+	if volume == nil {
+		return artifact
+	}
+
+	replicas := normalizedVolumeReplicas(*volume)
+	summary := summarizeVolumeReplicas(replicas)
+	artifact.VolumeID = volume.ID
+	artifact.VolumeIDs = summary.IDs
+	artifact.VolumeIDsByLocation = summary.IDsByLocation
+	artifact.SourceOSVolumeID = volume.SourceOSVolumeID
+	artifact.VolumeName = volume.Name
+	artifact.VolumeLocation = volume.Location
+	artifact.VolumeLocations = summary.Locations
+	artifact.VolumeStatus = volume.Status
+	artifact.ClonedVolume = volume.Cloned
+	artifact.DeleteConfig.VolumeIDs = summary.IDs
+	artifact.DeleteConfig.DeleteOnDestroy = true
+	artifact.StateData = generatedDataForArtifact(instance, *volume)
+	return artifact
+}
+
 // BuilderId returns the Packer builder ID that produced this artifact.
 //
 //revive:disable-next-line:var-naming
@@ -61,11 +101,31 @@ func (a *Artifact) Id() string {
 
 func (a *Artifact) String() string {
 	if a.ArtifactType == artifactTypeOSVolume {
-		message := fmt.Sprintf("Verda OS volume: %s", a.VolumeID)
 		if len(a.VolumeIDs) > 1 {
-			message = fmt.Sprintf("Verda OS volumes: %s (%d total)", a.VolumeID, len(a.VolumeIDs))
+			lines := []string{fmt.Sprintf("Verda OS volumes (%d):", len(a.VolumeIDs))}
+			for i, id := range a.VolumeIDs {
+				entry := id
+				if i < len(a.VolumeLocations) {
+					if location := a.VolumeLocations[i]; location != "" {
+						entry = fmt.Sprintf("%s: %s", location, id)
+					}
+				}
+				if id == a.VolumeID {
+					entry += " (primary)"
+				}
+				lines = append(lines, "  "+entry)
+			}
+			if a.ClonedVolume && a.SourceOSVolumeID != "" {
+				lines = append(lines, "Cloned from: "+a.SourceOSVolumeID)
+			}
+			return strings.Join(lines, "\n")
 		}
-		if a.ClonedVolume {
+
+		message := fmt.Sprintf("Verda OS volume: %s", a.VolumeID)
+		if a.VolumeLocation != "" {
+			message += fmt.Sprintf(" (%s)", a.VolumeLocation)
+		}
+		if a.ClonedVolume && a.SourceOSVolumeID != "" {
 			message += fmt.Sprintf(" (cloned from %s)", a.SourceOSVolumeID)
 		}
 		return message
@@ -86,7 +146,7 @@ func (a *Artifact) State(name string) interface{} {
 	return a.StateData[name]
 }
 
-// Destroy deletes the Verda instance when artifact cleanup is requested.
+// Destroy deletes the Verda resource when artifact cleanup is requested.
 func (a *Artifact) Destroy() error {
 	if a.Client == nil || !a.DeleteConfig.DeleteOnDestroy {
 		return nil

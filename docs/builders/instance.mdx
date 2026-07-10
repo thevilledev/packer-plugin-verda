@@ -15,6 +15,8 @@ The `verda-instance` builder creates a Verda instance, waits for it to become re
 
 By default the artifact is the created instance. With `artifact_type = "os_volume"`, the builder shuts down the instance, clones its OS volume, and returns the cloned volume artifact. The returned OS volume ID can be used later as the Verda instance `image` value in Terraform or another API client.
 
+A successful instance artifact remains live until Packer destroys it. Set `keep_instance = true` to prevent artifact destruction and failed-build cleanup from deleting the build instance. OS volume builds delete their temporary instance after capture unless `keep_instance` is enabled.
+
 ## Configuration Reference
 
 ### Required
@@ -86,7 +88,9 @@ build {
 
 ## OS Volume Artifacts
 
-Set `artifact_type = "os_volume"` to return a cloned OS volume instead of the instance. For multi-location fleets, set `artifact_volume_location_codes` to clone the artifact volume to each target location; the source location is also retained as a cloned artifact. The first configured location is the primary artifact ID, and generated data exposes all volume IDs by location.
+Set `artifact_type = "os_volume"` to return a cloned OS volume instead of the instance. The effective artifact locations are the configured `artifact_volume_location_codes` followed by the source instance location when it was not already listed, compared case-insensitively. The first configured location is the primary artifact ID, while console output and generated data expose every location and volume ID.
+
+Verda does not support cloning an attached OS volume directly across datacenters. The builder first creates the source-location artifact, waits for it to become detached, and uses that artifact as the source for the remaining locations. The source-location artifact is included once in the effective artifact set.
 
 Instances booted later from an existing OS volume cannot rely on Verda `ssh_key_ids` injection. Bake durable login keys into the guest during the Packer build, and enable `ssh_clear_authorized_keys` so Packer's temporary build key is removed before the volume is captured.
 
@@ -132,21 +136,48 @@ build {
 }
 ```
 
+### Persisting volume IDs
+
+The Packer artifact ID is singular, so use a manifest post-processor to persist the complete multi-location mapping. Manifest custom data values are strings; encode the list and map as JSON.
+
+```hcl
+post-processor "manifest" {
+  output = "packer-manifest.json"
+
+  custom_data = {
+    VolumeID            = build.VolumeID
+    SourceOSVolumeID    = build.SourceOSVolumeID
+    VolumeIDs           = jsonencode(build.VolumeIDs)
+    VolumeIDsByLocation = jsonencode(build.VolumeIDsByLocation)
+  }
+}
+```
+
+Packer appends repeated runs to the manifest. For a single-build workflow, inspect the latest entry:
+
+```sh
+jq '.builds[-1].custom_data.VolumeIDsByLocation | fromjson' packer-manifest.json
+```
+
 ## Terraform Handoff
 
 Use the Packer OS volume artifact ID, or a clone of it, as the Terraform `verda_instance.image` value. Do not pass it through `existing_volumes`; that field attaches additional non-OS volumes. Do not rely on `ssh_key_ids` here when booting from an existing OS volume; the keys must already be present in the guest image, or installed by a boot script that runs inside the guest.
 
-For multiple locations, store the generated `VolumeIDsByLocation` map and select the volume ID matching each instance location. For multiple instances in the same location, clone that location's Packer artifact once per instance before passing each clone ID as `image`.
+For multiple locations, select the volume ID matching each instance location. The manifest stores the map as a JSON string inside its JSON document, so decode both layers. For multiple instances in the same location, clone that location's Packer artifact once per instance before passing each clone ID as `image`.
 
 ```hcl
-variable "os_volume_ids_by_location" {
-  description = "Packer VolumeIDsByLocation generated data."
-  type        = map(string)
+locals {
+  packer_manifest = jsondecode(file("${path.module}/packer-manifest.json"))
+  packer_build    = local.packer_manifest.builds[length(local.packer_manifest.builds) - 1]
+
+  os_volume_ids_by_location = jsondecode(
+    local.packer_build.custom_data.VolumeIDsByLocation
+  )
 }
 
 resource "verda_instance" "app" {
   instance_type = "1B200.30V"
-  image         = var.os_volume_ids_by_location["FIN-03"]
+  image         = local.os_volume_ids_by_location["FIN-03"]
   hostname      = "app-01"
   description   = "App server from Packer OS volume"
   location      = "FIN-03"

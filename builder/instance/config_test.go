@@ -1,6 +1,7 @@
 package instance
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/hcl/v2/hcldec"
@@ -199,5 +200,105 @@ func TestConfigPrepareArtifactVolumeLocationCodesRequireCloning(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected multi-location artifact without cloning to fail")
+	}
+}
+
+func TestConfigPrepareRejectsInvalidInstanceRequestValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		override map[string]interface{}
+		contains string
+	}{
+		{name: "contract", override: map[string]interface{}{"contract": "FREE"}, contains: "contract"},
+		{name: "OS volume name without size", override: map[string]interface{}{"os_volume_name": "custom-os"}, contains: "os_volume"},
+		{name: "negative OS volume size", override: map[string]interface{}{"os_volume_size": -1}, contains: "os_volume"},
+		{name: "OS volume spot policy", override: map[string]interface{}{
+			"os_volume_size": 10, "os_volume_spot_behavior": "explode",
+		}, contains: "os_volume"},
+		{name: "data volume type", override: map[string]interface{}{
+			"volume": []map[string]interface{}{{"name": "data", "size": 10, "type": "magic"}},
+		}, contains: "volumes"},
+		{name: "data volume spot policy", override: map[string]interface{}{
+			"volume": []map[string]interface{}{{
+				"name": "data", "size": 10, "type": "NVMe", "on_spot_discontinue": "explode",
+			}},
+		}, contains: "on_spot_discontinue"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := validRawConfig()
+			for key, value := range tt.override {
+				config[key] = value
+			}
+			var c Config
+			_, _, err := c.Prepare(config)
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tt.contains) {
+				t.Fatalf("error = %q, want substring %q", err, tt.contains)
+			}
+		})
+	}
+}
+
+func TestConfigPrepareRejectsAmbiguousAndCaseDuplicateArtifactLocations(t *testing.T) {
+	tests := []map[string]interface{}{
+		{
+			"artifact_volume_location_code":  "FIN-01",
+			"artifact_volume_location_codes": []string{"FIN-03"},
+		},
+		{
+			"artifact_volume_location_codes": []string{"FIN-01", "fin-01"},
+		},
+	}
+	for _, override := range tests {
+		config := validRawConfig()
+		for key, value := range override {
+			config[key] = value
+		}
+		var c Config
+		if _, _, err := c.Prepare(config); err == nil {
+			t.Fatalf("expected locations %#v to fail", override)
+		}
+	}
+}
+
+func TestConfigPrepareValidatesAllowedSSHStatuses(t *testing.T) {
+	tests := [][]string{
+		{"running", "RUNNING"},
+		{"running", ""},
+		{"error"},
+	}
+	for _, statuses := range tests {
+		config := validRawConfig()
+		config["allowed_ssh_statuses"] = statuses
+		var c Config
+		if _, _, err := c.Prepare(config); err == nil {
+			t.Fatalf("expected statuses %#v to fail", statuses)
+		}
+	}
+}
+
+func TestConfigPrepareAcceptsValidVolumeConfiguration(t *testing.T) {
+	config := validRawConfig()
+	config["os_volume_size"] = 100
+	config["os_volume_spot_behavior"] = "keep_detached"
+	config["volume"] = []map[string]interface{}{{
+		"name": "data", "size": 10, "type": "NVMe", "on_spot_discontinue": "move_to_trash",
+	}}
+	var c Config
+	if _, _, err := c.Prepare(config); err != nil {
+		t.Fatalf("Prepare returned error: %v", err)
+	}
+}
+
+func validRawConfig() map[string]interface{} {
+	return map[string]interface{}{
+		"client_id":     "client-id",
+		"client_secret": "client-secret",
+		"instance_type": "V100",
+		"image":         "ubuntu-24.04",
+		"hostname":      "packer-test",
 	}
 }

@@ -10,6 +10,7 @@ const (
 	stateKeyCreatedSSHKeyID          = "verda_created_ssh_key_id"
 	stateKeyCreatedScriptID          = "verda_created_startup_script_id"
 	stateKeyCreatedArtifactVolumeIDs = "verda_created_artifact_volume_ids"
+	stateKeyBuildComplete            = "verda_build_complete"
 	stateKeyInstance                 = "verda_instance"
 	stateKeyInstanceIP               = "verda_instance_ip"
 	stateKeyArtifactVolume           = "verda_artifact_volume"
@@ -42,11 +43,6 @@ type volumeReplicaState struct {
 	Cloned   bool
 }
 
-func clientFromState(state multistep.StateBag) verdaClient {
-	client, _ := state.Get(stateKeyClient).(verdaClient)
-	return client
-}
-
 func instanceFromState(state multistep.StateBag) (instanceState, bool) {
 	value, ok := state.GetOk(stateKeyInstance)
 	if !ok {
@@ -54,6 +50,21 @@ func instanceFromState(state multistep.StateBag) (instanceState, bool) {
 	}
 	instance, ok := value.(instanceState)
 	return instance, ok
+}
+
+func buildComplete(state multistep.StateBag) bool {
+	complete, _ := state.Get(stateKeyBuildComplete).(bool)
+	return complete
+}
+
+func createdSSHKeyIDFromState(state multistep.StateBag) string {
+	id, _ := state.Get(stateKeyCreatedSSHKeyID).(string)
+	return id
+}
+
+func createdStartupScriptIDFromState(state multistep.StateBag) string {
+	id, _ := state.Get(stateKeyCreatedScriptID).(string)
+	return id
 }
 
 func instanceStateFromSDK(instance *verda.Instance) instanceState {
@@ -113,6 +124,7 @@ func volumeArtifactFromState(state multistep.StateBag) (volumeArtifactState, boo
 
 func generatedDataForArtifact(current instanceState, volume volumeArtifactState) map[string]interface{} {
 	replicas := normalizedVolumeReplicas(volume)
+	summary := summarizeVolumeReplicas(replicas)
 	return map[string]interface{}{
 		"ID":                       volume.ID,
 		"ArtifactType":             artifactTypeOSVolume,
@@ -123,15 +135,15 @@ func generatedDataForArtifact(current instanceState, volume volumeArtifactState)
 		"Location":                 current.Location,
 		"OSVolumeID":               current.OSVolumeID,
 		"VolumeID":                 volume.ID,
-		"VolumeIDs":                volumeReplicaIDs(replicas),
-		"VolumeIDsByLocation":      volumeReplicaIDsByLocation(replicas),
+		"VolumeIDs":                summary.IDs,
+		"VolumeIDsByLocation":      summary.IDsByLocation,
 		"SourceOSVolumeID":         volume.SourceOSVolumeID,
 		"VolumeName":               volume.Name,
-		"VolumeNamesByLocation":    volumeReplicaNamesByLocation(replicas),
+		"VolumeNamesByLocation":    summary.NamesByLocation,
 		"VolumeLocation":           volume.Location,
-		"VolumeLocations":          volumeReplicaLocations(replicas),
+		"VolumeLocations":          summary.Locations,
 		"VolumeStatus":             volume.Status,
-		"VolumeStatusesByLocation": volumeReplicaStatusesByLocation(replicas),
+		"VolumeStatusesByLocation": summary.StatusesByLocation,
 		"VolumeCloned":             volume.Cloned,
 	}
 }
@@ -149,42 +161,28 @@ func normalizedVolumeReplicas(volume volumeArtifactState) []volumeReplicaState {
 	}}
 }
 
-func volumeReplicaIDs(replicas []volumeReplicaState) []string {
-	ids := make([]string, 0, len(replicas))
-	for _, replica := range replicas {
-		ids = append(ids, replica.ID)
-	}
-	return ids
+type volumeReplicaSummary struct {
+	IDs                []string
+	Locations          []string
+	IDsByLocation      map[string]string
+	NamesByLocation    map[string]string
+	StatusesByLocation map[string]string
 }
 
-func volumeReplicaLocations(replicas []volumeReplicaState) []string {
-	locations := make([]string, 0, len(replicas))
-	for _, replica := range replicas {
-		locations = append(locations, replica.Location)
+func summarizeVolumeReplicas(replicas []volumeReplicaState) volumeReplicaSummary {
+	summary := volumeReplicaSummary{
+		IDs:                make([]string, 0, len(replicas)),
+		Locations:          make([]string, 0, len(replicas)),
+		IDsByLocation:      make(map[string]string, len(replicas)),
+		NamesByLocation:    make(map[string]string, len(replicas)),
+		StatusesByLocation: make(map[string]string, len(replicas)),
 	}
-	return locations
-}
-
-func volumeReplicaIDsByLocation(replicas []volumeReplicaState) map[string]string {
-	ids := make(map[string]string, len(replicas))
 	for _, replica := range replicas {
-		ids[replica.Location] = replica.ID
+		summary.IDs = append(summary.IDs, replica.ID)
+		summary.Locations = append(summary.Locations, replica.Location)
+		summary.IDsByLocation[replica.Location] = replica.ID
+		summary.NamesByLocation[replica.Location] = replica.Name
+		summary.StatusesByLocation[replica.Location] = replica.Status
 	}
-	return ids
-}
-
-func volumeReplicaNamesByLocation(replicas []volumeReplicaState) map[string]string {
-	names := make(map[string]string, len(replicas))
-	for _, replica := range replicas {
-		names[replica.Location] = replica.Name
-	}
-	return names
-}
-
-func volumeReplicaStatusesByLocation(replicas []volumeReplicaState) map[string]string {
-	statuses := make(map[string]string, len(replicas))
-	for _, replica := range replicas {
-		statuses[replica.Location] = replica.Status
-	}
-	return statuses
+	return summary
 }
