@@ -8,23 +8,32 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	pluginVersion "github.com/thevilledev/packer-plugin-verda/version"
 	"github.com/verda-cloud/verdacloud-sdk-go/pkg/verda"
 )
 
 func TestSDKClientCloneVolumeSendsLocationAndType(t *testing.T) {
 	var clonePayload volumeCloneActionRequest
+	expectedUserAgent := verda.BuildUserAgent(pluginVersion.UserAgent())
 
-	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	httpClient := newUserAgentTestHTTPClient(expectedUserAgent, roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		switch r.URL.Path {
 		case "/v1/oauth2/token":
 			if r.Method != http.MethodPost {
 				return nil, fmt.Errorf("token method = %s", r.Method)
 			}
+			if got := r.Header.Get("User-Agent"); got != expectedUserAgent {
+				return nil, fmt.Errorf("token User-Agent = %q", got)
+			}
 			return jsonResponse(r, http.StatusOK, `{"access_token":"test-token","token_type":"Bearer","expires_in":3600}`), nil
 		case "/v1/volumes":
 			if r.Method != http.MethodPut {
 				return nil, fmt.Errorf("clone method = %s", r.Method)
+			}
+			if got := r.Header.Get("User-Agent"); got != expectedUserAgent {
+				return nil, fmt.Errorf("clone User-Agent = %q", got)
 			}
 			if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
 				return nil, fmt.Errorf("Authorization = %q", got)
@@ -36,12 +45,13 @@ func TestSDKClientCloneVolumeSendsLocationAndType(t *testing.T) {
 		default:
 			return nil, fmt.Errorf("unexpected path %q", r.URL.Path)
 		}
-	})}
+	}))
 
 	verdaSDK, err := verda.NewClient(
 		verda.WithClientID("client-id"),
 		verda.WithClientSecret("client-secret"),
 		verda.WithBaseURL("https://verda.test/v1"),
+		verda.WithUserAgent(pluginVersion.UserAgent()),
 		verda.WithHTTPClient(httpClient),
 	)
 	if err != nil {
@@ -68,6 +78,122 @@ func TestSDKClientCloneVolumeSendsLocationAndType(t *testing.T) {
 		clonePayload.Type != verda.VolumeTypeNVMe {
 		t.Fatalf("clone payload = %#v", clonePayload)
 	}
+}
+
+func TestNewSDKClientConfiguresUserAgent(t *testing.T) {
+	verdaSDK, err := newSDKClient(&Config{
+		ClientID:     "client-id",
+		ClientSecret: "client-secret",
+		APITimeout:   time.Second,
+	})
+	if err != nil {
+		t.Fatalf("newSDKClient: %v", err)
+	}
+
+	if got, want := verdaSDK.UserAgent, pluginVersion.UserAgent(); got != want {
+		t.Fatalf("UserAgent = %q, want %q", got, want)
+	}
+
+	transport, ok := verdaSDK.HTTPClient.Transport.(userAgentTransport)
+	if !ok {
+		t.Fatalf("HTTPClient.Transport = %T, want userAgentTransport", verdaSDK.HTTPClient.Transport)
+	}
+	if got, want := transport.userAgent, verda.BuildUserAgent(pluginVersion.UserAgent()); got != want {
+		t.Fatalf("transport User-Agent = %q, want %q", got, want)
+	}
+}
+
+func TestSDKClientCreateSSHKeySendsUserAgentOnDirectSDKRequest(t *testing.T) {
+	expectedUserAgent := verda.BuildUserAgent(pluginVersion.UserAgent())
+	seen := map[string]string{}
+
+	httpClient := newUserAgentTestHTTPClient(expectedUserAgent, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		seen[r.Method+" "+r.URL.Path] = r.Header.Get("User-Agent")
+
+		switch r.URL.Path {
+		case "/v1/oauth2/token":
+			if r.Method != http.MethodPost {
+				return nil, fmt.Errorf("token method = %s", r.Method)
+			}
+			return jsonResponse(r, http.StatusOK, `{"access_token":"test-token","token_type":"Bearer","expires_in":3600}`), nil
+		case "/v1/ssh-keys":
+			if r.Method != http.MethodPost {
+				return nil, fmt.Errorf("create SSH key method = %s", r.Method)
+			}
+			if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+				return nil, fmt.Errorf("Authorization = %q", got)
+			}
+			return jsonResponse(r, http.StatusCreated, `key-1`), nil
+		case "/v1/ssh-keys/key-1":
+			if r.Method != http.MethodGet {
+				return nil, fmt.Errorf("get SSH key method = %s", r.Method)
+			}
+			return jsonResponse(r, http.StatusOK, `[{"id":"key-1","name":"test-key","key":"ssh-rsa AAA"}]`), nil
+		default:
+			return nil, fmt.Errorf("unexpected path %q", r.URL.Path)
+		}
+	}))
+
+	verdaSDK, err := verda.NewClient(
+		verda.WithClientID("client-id"),
+		verda.WithClientSecret("client-secret"),
+		verda.WithBaseURL("https://verda.test/v1"),
+		verda.WithUserAgent(pluginVersion.UserAgent()),
+		verda.WithHTTPClient(httpClient),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	client := sdkClient{client: verdaSDK}
+	key, err := client.CreateSSHKey(context.Background(), verda.CreateSSHKeyRequest{
+		Name:      "test-key",
+		PublicKey: "ssh-rsa AAA",
+	})
+	if err != nil {
+		t.Fatalf("CreateSSHKey: %v", err)
+	}
+	if key.ID != "key-1" {
+		t.Fatalf("SSH key ID = %q", key.ID)
+	}
+
+	for _, request := range []string{
+		"POST /v1/oauth2/token",
+		"POST /v1/ssh-keys",
+		"GET /v1/ssh-keys/key-1",
+	} {
+		if got := seen[request]; got != expectedUserAgent {
+			t.Fatalf("%s User-Agent = %q, want %q", request, got, expectedUserAgent)
+		}
+	}
+}
+
+func TestUserAgentTransportPreservesExistingUserAgent(t *testing.T) {
+	const existingUserAgent = "custom-client/1.0"
+
+	httpClient := &http.Client{
+		Transport: userAgentTransport{
+			base: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if got := r.Header.Get("User-Agent"); got != existingUserAgent {
+					return nil, fmt.Errorf("User-Agent = %q", got)
+				}
+				return jsonResponse(r, http.StatusOK, `{}`), nil
+			}),
+			userAgent: "packer-plugin-verda/test",
+		},
+	}
+
+	req, err := http.NewRequest(http.MethodGet, "https://verda.test/v1/ping", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("User-Agent", existingUserAgent)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	_ = resp.Body.Close()
 }
 
 func TestParseVolumeCloneResponse(t *testing.T) {
@@ -153,6 +279,13 @@ func TestSDKClientRetriesUnauthorizedWithFreshToken(t *testing.T) {
 	if tokenRequests != 2 || volumeRequests != 2 {
 		t.Fatalf("tokenRequests = %d, volumeRequests = %d", tokenRequests, volumeRequests)
 	}
+}
+
+func newUserAgentTestHTTPClient(userAgent string, transport http.RoundTripper) *http.Client {
+	return &http.Client{Transport: userAgentTransport{
+		base:      transport,
+		userAgent: userAgent,
+	}}
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

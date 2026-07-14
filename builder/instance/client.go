@@ -49,17 +49,46 @@ type sdkClient struct {
 }
 
 func newSDKClient(config *Config) (*verda.Client, error) {
+	userAgent := version.UserAgent()
 	options := []verda.ClientOption{
 		verda.WithClientID(config.ClientID),
 		verda.WithClientSecret(config.ClientSecret),
-		verda.WithUserAgent(fmt.Sprintf("packer-plugin-verda/%s", version.Version)),
-		verda.WithHTTPClient(&http.Client{Timeout: config.APITimeout}),
+		verda.WithUserAgent(userAgent),
+		verda.WithHTTPClient(&http.Client{
+			Timeout: config.APITimeout,
+			Transport: userAgentTransport{
+				base:      http.DefaultTransport,
+				userAgent: verda.BuildUserAgent(userAgent),
+			},
+		}),
 		verda.WithDebugLogging(config.Debug),
 	}
 	if config.BaseURL != "" {
 		options = append(options, verda.WithBaseURL(config.BaseURL))
 	}
 	return verda.NewClient(options...)
+}
+
+type userAgentTransport struct {
+	base      http.RoundTripper
+	userAgent string
+}
+
+func (t userAgentTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Header.Get("User-Agent") != "" {
+		return t.baseTransport().RoundTrip(req)
+	}
+
+	req = req.Clone(req.Context())
+	req.Header.Set("User-Agent", t.userAgent)
+	return t.baseTransport().RoundTrip(req)
+}
+
+func (t userAgentTransport) baseTransport() http.RoundTripper {
+	if t.base != nil {
+		return t.base
+	}
+	return http.DefaultTransport
 }
 
 func newVerdaClient(config *Config) (verdaClient, error) {

@@ -12,3 +12,8 @@ var (
 	// PluginVersion is the Packer SDK representation of this plugin version.
 	PluginVersion = version.NewPluginVersion(Version, VersionPrerelease, VersionMetadata)
 )
+
+// UserAgent returns the plugin product token for Verda API calls.
+func UserAgent() string {
+	return "packer-plugin-verda/" + PluginVersion.FormattedVersion()
+}
