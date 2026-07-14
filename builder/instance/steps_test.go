@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"errors"
+	"net/http"
 	"reflect"
 	"testing"
 	"time"
@@ -36,10 +37,14 @@ type fakeClient struct {
 	volumesByID           map[string][]*verda.Volume
 	getInstanceCallsByID  map[string]int
 	getVolumeCallsByID    map[string]int
+	getVolumeErrsByID     map[string][]error
+	getVolumeErrCallsByID map[string]int
 	createInstanceErr     error
 	deleteInstanceErr     error
 	getVolumeErr          error
 	deleteVolumeErrs      map[string]error
+	deleteVolumeErrsByID  map[string][]error
+	deleteVolumeErrCalls  map[string]int
 	createInstanceFn      func(context.Context, verda.CreateInstanceRequest) (*verda.Instance, error)
 	createInstanceReqs    []verda.CreateInstanceRequest
 	createSSHKeyIDs       []string
@@ -100,6 +105,18 @@ func (f *fakeClient) GetVolume(_ context.Context, id string) (*verda.Volume, err
 	if f.getVolumeErr != nil {
 		return nil, f.getVolumeErr
 	}
+	if errs := f.getVolumeErrsByID[id]; len(errs) > 0 {
+		if f.getVolumeErrCallsByID == nil {
+			f.getVolumeErrCallsByID = make(map[string]int)
+		}
+		idx := f.getVolumeErrCallsByID[id]
+		if idx < len(errs) {
+			f.getVolumeErrCallsByID[id]++
+			if err := errs[idx]; err != nil {
+				return nil, err
+			}
+		}
+	}
 	volumes := f.volumesByID[id]
 	if len(volumes) == 0 {
 		return &verda.Volume{
@@ -147,6 +164,17 @@ func (f *fakeClient) DeleteVolume(_ context.Context, id string, force bool) erro
 	f.deleteVolumeID = id
 	f.deleteVolumeForce = force
 	f.deleteVolumeCallIDs = append(f.deleteVolumeCallIDs, id)
+	if errs := f.deleteVolumeErrsByID[id]; len(errs) > 0 {
+		if f.deleteVolumeErrCalls == nil {
+			f.deleteVolumeErrCalls = make(map[string]int)
+		}
+		idx := f.deleteVolumeErrCalls[id]
+		if idx >= len(errs) {
+			idx = len(errs) - 1
+		}
+		f.deleteVolumeErrCalls[id]++
+		return errs[idx]
+	}
 	return f.deleteVolumeErrs[id]
 }
 
@@ -534,6 +562,52 @@ func TestStepCreateOSVolumeArtifactRetainsSourceLocationReplica(t *testing.T) {
 	}
 }
 
+func TestStepCreateOSVolumeArtifactRetriesTransientCloneNotFound(t *testing.T) {
+	clone := true
+	ip := "203.0.113.10"
+	osVolumeID := "vol-os"
+	client := &fakeClient{
+		cloneVolumeIDs: []string{"vol-fin-01", "vol-fin-02"},
+		instancesByID: map[string][]*verda.Instance{
+			"inst-1": {{ID: "inst-1", Status: verda.StatusOffline, IP: &ip, OSVolumeID: &osVolumeID}},
+		},
+		volumesByID: map[string][]*verda.Volume{
+			"vol-os":     {{ID: "vol-os", Name: "source-volume", Type: verda.VolumeTypeNVMe, Status: verda.VolumeStatusAttached, Location: "FIN-01"}},
+			"vol-fin-01": {{ID: "vol-fin-01", Name: "artifact-volume", Status: verda.VolumeStatusDetached, Location: "FIN-01"}},
+			"vol-fin-02": {{ID: "vol-fin-02", Name: "artifact-volume", Status: verda.VolumeStatusDetached, Location: "FIN-02"}},
+		},
+		getVolumeErrsByID: map[string][]error{
+			"vol-fin-02": {&verda.APIError{StatusCode: http.StatusNotFound, Code: "not_found", Message: "Volume ID doesn't exist"}},
+		},
+	}
+	state := testState(client)
+	state.Put(stateKeyInstance, instanceState{ID: "inst-1", IP: ip, Status: verda.StatusRunning, Location: "FIN-01", OSVolumeID: osVolumeID})
+
+	step := &stepCreateOSVolumeArtifact{
+		Config: &Config{
+			ArtifactType:                artifactTypeOSVolume,
+			CloneOSVolume:               &clone,
+			ArtifactVolumeName:          "artifact-volume",
+			ArtifactVolumeLocationCodes: []string{"FIN-01", "FIN-02"},
+			PollInterval:                time.Millisecond,
+			InstanceTimeout:             time.Second,
+		},
+	}
+	if action := step.Run(context.Background(), state); action != multistep.ActionContinue {
+		t.Fatalf("action = %v, err = %v", action, state.Get("error"))
+	}
+	if client.getVolumeErrCallsByID["vol-fin-02"] != 1 {
+		t.Fatalf("vol-fin-02 transient lookup errors = %d", client.getVolumeErrCallsByID["vol-fin-02"])
+	}
+	volume, ok := volumeArtifactFromState(state)
+	if !ok {
+		t.Fatal("expected volume artifact state")
+	}
+	if len(volume.Replicas) != 2 || volume.Replicas[1].ID != "vol-fin-02" {
+		t.Fatalf("volume replicas = %#v", volume.Replicas)
+	}
+}
+
 func TestStepCreateOSVolumeArtifactAddsSourceReplicaToConfiguredLocations(t *testing.T) {
 	clone := true
 	ip := "203.0.113.10"
@@ -645,6 +719,33 @@ func TestStepCreateOSVolumeArtifactCleanupDeletesPartialClones(t *testing.T) {
 
 	step.Cleanup(state)
 	if !reflect.DeepEqual(client.deleteVolumeCallIDs, []string{"vol-fin-01", "vol-fin-02"}) {
+		t.Fatalf("deleted volumes = %#v", client.deleteVolumeCallIDs)
+	}
+}
+
+func TestStepCreateOSVolumeArtifactCleanupRetriesCloneInProgressDelete(t *testing.T) {
+	clone := true
+	apiErr := &verda.APIError{
+		StatusCode: http.StatusBadRequest,
+		Code:       "invalid_request",
+		Message:    "Volume vol-cloning is in the middle of cloning process, cannot be deleted",
+	}
+	client := &fakeClient{
+		deleteVolumeErrsByID: map[string][]error{
+			"vol-cloning": {apiErr, nil},
+		},
+	}
+	state := testState(client)
+	state.Put(stateKeyCreatedArtifactVolumeIDs, []string{"vol-cloning"})
+
+	step := &stepCreateOSVolumeArtifact{Config: &Config{
+		ArtifactType:    artifactTypeOSVolume,
+		CloneOSVolume:   &clone,
+		PollInterval:    time.Millisecond,
+		InstanceTimeout: time.Second,
+	}}
+	step.Cleanup(state)
+	if !reflect.DeepEqual(client.deleteVolumeCallIDs, []string{"vol-cloning", "vol-cloning"}) {
 		t.Fatalf("deleted volumes = %#v", client.deleteVolumeCallIDs)
 	}
 }

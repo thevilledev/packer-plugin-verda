@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -298,7 +299,7 @@ func (s *stepCreateOSVolumeArtifact) Run(ctx context.Context, state multistep.St
 			Cloned:   true,
 		}
 		ui.Say(fmt.Sprintf("Created OS volume artifact %s in %s", seedID, sourceLocation))
-		sdkVolume, err := waitForVolumeStatuses(ctx, client, seedID, s.Config, verda.VolumeStatusDetached)
+		sdkVolume, err := waitForClonedVolumeStatuses(ctx, client, seedID, s.Config, verda.VolumeStatusDetached)
 		if err != nil {
 			state.Put("error", err)
 			return multistep.ActionHalt
@@ -338,7 +339,7 @@ func (s *stepCreateOSVolumeArtifact) Run(ctx context.Context, state multistep.St
 			if replicas[i].ID == seed.ID {
 				continue
 			}
-			sdkVolume, err := waitForVolumeReady(ctx, client, replicas[i].ID, s.Config)
+			sdkVolume, err := waitForClonedVolumeReady(ctx, client, replicas[i].ID, s.Config)
 			if err != nil {
 				state.Put("error", err)
 				return multistep.ActionHalt
@@ -397,7 +398,7 @@ func (s *stepCreateOSVolumeArtifact) Cleanup(state multistep.StateBag) {
 	ui := state.Get("ui").(packer.Ui)
 	for _, id := range ids {
 		ui.Say(fmt.Sprintf("Deleting partial Verda OS volume artifact %s...", id))
-		if err := client.DeleteVolume(context.Background(), id, s.Config.DeletePermanently); err != nil {
+		if err := deletePartialVolumeArtifact(context.Background(), client, id, s.Config); err != nil {
 			ui.Error(fmt.Sprintf("Error deleting partial OS volume artifact %s: %s", id, err))
 		}
 	}
@@ -406,6 +407,34 @@ func (s *stepCreateOSVolumeArtifact) Cleanup(state multistep.StateBag) {
 func rememberCreatedArtifactVolume(state multistep.StateBag, id string) {
 	ids, _ := state.Get(stateKeyCreatedArtifactVolumeIDs).([]string)
 	state.Put(stateKeyCreatedArtifactVolumeIDs, append(ids, id))
+}
+
+func deletePartialVolumeArtifact(ctx context.Context, client verdaClient, id string, config *Config) error {
+	deletePermanently := false
+	if config != nil {
+		deletePermanently = config.DeletePermanently
+	}
+	_, err := pollUntil(
+		ctx,
+		effectiveInstanceTimeout(config),
+		effectivePollInterval(config),
+		func(ctx context.Context) (struct{}, bool, error) {
+			if err := client.DeleteVolume(ctx, id, deletePermanently); err != nil {
+				if isNotFound(err) {
+					return struct{}{}, true, nil
+				}
+				if isVolumeCloneInProgress(err) {
+					return struct{}{}, false, nil
+				}
+				return struct{}{}, false, err
+			}
+			return struct{}{}, true, nil
+		},
+		func() error {
+			return fmt.Errorf("timeout deleting volume %s while clone operation remained in progress", id)
+		},
+	)
+	return err
 }
 
 func shouldPreserveSourceOSVolume(config *Config, state multistep.StateBag, current instanceState) bool {
@@ -478,10 +507,33 @@ func waitForVolumeReady(ctx context.Context, client verdaClient, id string, conf
 		client,
 		id,
 		config,
+		false,
 		verda.VolumeStatusCreated,
 		verda.VolumeStatusDetached,
 		verda.VolumeStatusAttached,
 	)
+}
+
+func waitForClonedVolumeReady(ctx context.Context, client verdaClient, id string, config *Config) (*verda.Volume, error) {
+	return waitForClonedVolumeStatuses(
+		ctx,
+		client,
+		id,
+		config,
+		verda.VolumeStatusCreated,
+		verda.VolumeStatusDetached,
+		verda.VolumeStatusAttached,
+	)
+}
+
+func waitForClonedVolumeStatuses(
+	ctx context.Context,
+	client verdaClient,
+	id string,
+	config *Config,
+	statuses ...string,
+) (*verda.Volume, error) {
+	return waitForVolumeStatuses(ctx, client, id, config, true, statuses...)
 }
 
 func waitForVolumeStatuses(
@@ -489,6 +541,7 @@ func waitForVolumeStatuses(
 	client verdaClient,
 	id string,
 	config *Config,
+	retryNotFound bool,
 	statuses ...string,
 ) (*verda.Volume, error) {
 	return pollUntil(
@@ -498,6 +551,9 @@ func waitForVolumeStatuses(
 		func(ctx context.Context) (*verda.Volume, bool, error) {
 			volume, err := client.GetVolume(ctx, id)
 			if err != nil {
+				if retryNotFound && isNotFound(err) {
+					return nil, false, nil
+				}
 				return nil, false, fmt.Errorf("waiting for volume %s: %w", id, err)
 			}
 			if statusAllowed(volume.Status, statuses) {
@@ -513,6 +569,41 @@ func waitForVolumeStatuses(
 			return fmt.Errorf("timeout waiting for volume %s to reach %s", id, strings.Join(statuses, ", "))
 		},
 	)
+}
+
+func effectiveInstanceTimeout(config *Config) time.Duration {
+	if config != nil && config.InstanceTimeout > 0 {
+		return config.InstanceTimeout
+	}
+	return defaultInstanceTimeout
+}
+
+func effectivePollInterval(config *Config) time.Duration {
+	if config != nil && config.PollInterval > 0 {
+		return config.PollInterval
+	}
+	return defaultPollInterval
+}
+
+func isNotFound(err error) bool {
+	var apiErr *verda.APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
+}
+
+func isVolumeCloneInProgress(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *verda.APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusBadRequest {
+		message := strings.ToLower(apiErr.Code + " " + apiErr.Message + " " + apiErr.Details)
+		if strings.Contains(message, "cloning") {
+			return true
+		}
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "middle of cloning process") ||
+		(strings.Contains(message, "cloning") && strings.Contains(message, "cannot be deleted"))
 }
 
 func pollUntil[T any](
