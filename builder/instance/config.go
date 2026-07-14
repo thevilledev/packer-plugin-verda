@@ -24,6 +24,8 @@ const (
 	defaultPollInterval    = 15 * time.Second
 	defaultLocationCode    = verda.LocationFIN03
 	defaultSSHUsername     = "root"
+	defaultContract        = "PAY_AS_YOU_GO"
+	spotContract           = "SPOT"
 
 	artifactTypeInstance = "instance"
 	artifactTypeOSVolume = "os_volume"
@@ -189,10 +191,13 @@ func (c *Config) setDefaults() {
 	}
 	if c.Contract == "" {
 		if c.IsSpot {
-			c.Contract = "SPOT"
+			c.Contract = spotContract
 		} else {
-			c.Contract = "PAY_AS_YOU_GO"
+			c.Contract = defaultContract
 		}
+	}
+	if c.Contract == spotContract {
+		c.IsSpot = true
 	}
 	if c.PollInterval == 0 {
 		c.PollInterval = defaultPollInterval
@@ -257,6 +262,9 @@ func (c *Config) validate() error {
 				requestFieldsSet = false
 			}
 		}
+	}
+	if c.IsSpot && c.Contract != spotContract {
+		errs = append(errs, fmt.Errorf("contract must be %q when is_spot is true", spotContract))
 	}
 	if c.PollInterval < time.Second {
 		errs = append(errs, errors.New("poll_interval must be at least 1s"))

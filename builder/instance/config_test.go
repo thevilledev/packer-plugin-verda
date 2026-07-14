@@ -107,6 +107,58 @@ func TestConfigPrepareDefaults(t *testing.T) {
 	}
 }
 
+func TestConfigPrepareSpotDefaults(t *testing.T) {
+	config := validRawConfig()
+	config["is_spot"] = true
+
+	var c Config
+	if _, _, err := c.Prepare(config); err != nil {
+		t.Fatalf("Prepare returned error: %s", err)
+	}
+	if c.Contract != spotContract {
+		t.Fatalf("Contract = %q, want %q", c.Contract, spotContract)
+	}
+
+	req := c.instanceRequest("", "")
+	if !req.IsSpot {
+		t.Fatal("expected IsSpot request field")
+	}
+	if req.Contract != spotContract {
+		t.Fatalf("request Contract = %q, want %q", req.Contract, spotContract)
+	}
+}
+
+func TestConfigPrepareSpotContractSetsSpotFlag(t *testing.T) {
+	config := validRawConfig()
+	config["contract"] = spotContract
+
+	var c Config
+	if _, _, err := c.Prepare(config); err != nil {
+		t.Fatalf("Prepare returned error: %s", err)
+	}
+	if !c.IsSpot {
+		t.Fatal("expected IsSpot to be true when contract is SPOT")
+	}
+	if req := c.instanceRequest("", ""); !req.IsSpot {
+		t.Fatal("expected spot contract to set request IsSpot")
+	}
+}
+
+func TestConfigPrepareRejectsConflictingSpotContract(t *testing.T) {
+	config := validRawConfig()
+	config["is_spot"] = true
+	config["contract"] = defaultContract
+
+	var c Config
+	_, _, err := c.Prepare(config)
+	if err == nil {
+		t.Fatal("expected conflicting spot contract to fail")
+	}
+	if !strings.Contains(err.Error(), "is_spot") {
+		t.Fatalf("error = %q, want is_spot conflict", err)
+	}
+}
+
 func TestConfigPrepareValidation(t *testing.T) {
 	var c Config
 	_, _, err := c.Prepare(map[string]interface{}{

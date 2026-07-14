@@ -60,6 +60,8 @@ build {
 }
 ```
 
+To run the temporary build instance as spot capacity, set `is_spot = true` or `contract = "SPOT"` in the source block. See [examples/spot.pkr.hcl](examples/spot.pkr.hcl) for a minimal spot build.
+
 To produce a reusable OS volume instead of an instance artifact, set `artifact_type = "os_volume"`. The artifact ID can then be used as the Verda instance `image` value in Terraform or another API client.
 
 Multi-location OS volume builds print every location and volume ID. The OS volume example also writes `VolumeIDsByLocation` to `packer-manifest.json` for machine-readable handoff.
@@ -77,7 +79,7 @@ When you deploy from an existing Verda OS volume, do not rely on deployment-time
 ## Documentation
 
 - Builder reference: [docs/builders/instance.mdx](docs/builders/instance.mdx)
-- Examples: [examples/basic.pkr.hcl](examples/basic.pkr.hcl), [examples/os-volume.pkr.hcl](examples/os-volume.pkr.hcl)
+- Examples: [examples/basic.pkr.hcl](examples/basic.pkr.hcl), [examples/spot.pkr.hcl](examples/spot.pkr.hcl), [examples/os-volume.pkr.hcl](examples/os-volume.pkr.hcl)
 
 The option reference is generated from the builder config comments with `packer-sdc`, matching the pattern used by other Packer plugins.
 

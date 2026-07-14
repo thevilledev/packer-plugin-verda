@@ -86,6 +86,25 @@ build {
 }
 ```
 
+## Spot Builds
+
+Set `is_spot = true` to create the Packer build instance as Verda spot capacity. This defaults `contract` to `SPOT`. Setting `contract = "SPOT"` is also accepted and sends the same spot request to Verda. Configurations that set `is_spot = true` with a non-`SPOT` contract are rejected during `packer validate`.
+
+```hcl
+source "verda-instance" "ubuntu_spot" {
+  instance_type = "1L40S.20V"
+  location_code = "FIN-03"
+  image         = "ubuntu-24.04"
+  hostname      = "packer-verda-spot-example"
+
+  is_spot = true
+
+  ssh_username = "root"
+}
+```
+
+Spot builds can also set discontinuation behavior for volumes created with the instance. Use `os_volume_spot_behavior` for the OS volume and `on_spot_discontinue` inside each `volume` block. Valid values are `keep_detached`, `move_to_trash`, and `delete_permanently`.
+
 ## OS Volume Artifacts
 
 Set `artifact_type = "os_volume"` to return a cloned OS volume instead of the instance. The effective artifact locations are the configured `artifact_volume_location_codes` followed by the source instance location when it was not already listed, compared case-insensitively. The first configured location is the primary artifact ID, while console output and generated data expose every location and volume ID.

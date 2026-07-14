@@ -266,18 +266,27 @@ func TestStepCreateStartupScriptStoresRunStateWithoutMutatingConfig(t *testing.T
 
 func TestStepCreateInstanceRequest(t *testing.T) {
 	cfg := &Config{
-		InstanceType:      "V100",
-		Image:             "ubuntu-24.04",
-		Hostname:          "packer-test",
-		Description:       "Packer test",
-		LocationCode:      "FIN-03",
-		Contract:          "PAY_AS_YOU_GO",
-		SSHKeyIDs:         []string{"key-1"},
-		StartupScriptID:   "script-1",
-		OSVolumeName:      "os-volume",
-		OSVolumeSize:      100,
-		ExistingVolumeIDs: []string{"vol-existing"},
-		Volumes:           []Volume{{Name: "data", Size: 50, Type: "NVMe"}},
+		InstanceType:         "V100",
+		Image:                "ubuntu-24.04",
+		Hostname:             "packer-test",
+		Description:          "Packer test",
+		LocationCode:         "FIN-03",
+		Contract:             spotContract,
+		Pricing:              "FIXED_PRICE",
+		IsSpot:               true,
+		Coupon:               "PACKER20",
+		SSHKeyIDs:            []string{"key-1"},
+		StartupScriptID:      "script-1",
+		OSVolumeName:         "os-volume",
+		OSVolumeSize:         100,
+		OSVolumeSpotBehavior: verda.SpotDiscontinueKeepDetached,
+		ExistingVolumeIDs:    []string{"vol-existing"},
+		Volumes: []Volume{{
+			Name:              "data",
+			Size:              50,
+			Type:              "NVMe",
+			OnSpotDiscontinue: verda.SpotDiscontinueMoveToTrash,
+		}},
 		VolumeIDsToDelete: []string{"vol-os"},
 		DeletePermanently: true,
 	}
@@ -298,8 +307,23 @@ func TestStepCreateInstanceRequest(t *testing.T) {
 	if req.OSVolume == nil || req.OSVolume.Size != 100 {
 		t.Fatalf("OSVolume = %#v", req.OSVolume)
 	}
+	if req.OSVolume.OnSpotDiscontinue != verda.SpotDiscontinueKeepDetached {
+		t.Fatalf("OSVolume OnSpotDiscontinue = %q", req.OSVolume.OnSpotDiscontinue)
+	}
 	if len(req.Volumes) != 1 || req.Volumes[0].LocationCode != "FIN-03" {
 		t.Fatalf("Volumes = %#v", req.Volumes)
+	}
+	if !req.IsSpot || req.Contract != spotContract {
+		t.Fatalf("spot request fields: IsSpot=%t Contract=%q", req.IsSpot, req.Contract)
+	}
+	if req.Pricing != "FIXED_PRICE" {
+		t.Fatalf("Pricing = %q", req.Pricing)
+	}
+	if req.Coupon == nil || *req.Coupon != "PACKER20" {
+		t.Fatalf("Coupon = %#v", req.Coupon)
+	}
+	if req.Volumes[0].OnSpotDiscontinue != verda.SpotDiscontinueMoveToTrash {
+		t.Fatalf("volume OnSpotDiscontinue = %q", req.Volumes[0].OnSpotDiscontinue)
 	}
 
 	step.Cleanup(state)
