@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/hashicorp/hcl/v2 v2.24.0
-	github.com/hashicorp/packer-plugin-sdk v0.6.9
+	github.com/hashicorp/packer-plugin-sdk v0.6.10
 	github.com/verda-cloud/verdacloud-sdk-go v1.4.2
 	github.com/zclconf/go-cty v1.19.0
 )
