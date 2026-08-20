@@ -368,8 +368,8 @@ github.com/ugorji/go/codec v1.3.1 h1:waO7eEiFDwidsBN6agj1vJQ4AG7lh2yqXyOXqhgQuyY
 github.com/ugorji/go/codec v1.3.1/go.mod h1:pRBVtBSKl77K30Bv8R2P+cLSGaTtex6fsA2Wjqmfxj4=
 github.com/ulikunitz/xz v0.5.15 h1:9DNdB5s+SgV3bQ2ApL10xRc35ck0DuIX/isZvIk+ubY=
 github.com/ulikunitz/xz v0.5.15/go.mod h1:nbz6k7qbPmH4IRqmfOplQw/tblSgqTqBwxkY0oWt/14=
-github.com/verda-cloud/verdacloud-sdk-go v1.4.2 h1:oVb8fHVQOY+YPuuMYMee9gYCkPTwAw01LmkqxM21T/Y=
-github.com/verda-cloud/verdacloud-sdk-go v1.4.2/go.mod h1:pmlpiCL9fTSikZ3qWLJPpHOG0E8PKkQVUX5s4Z+SktY=
+github.com/verda-cloud/verdacloud-sdk-go v1.4.3 h1:/wCTMEF4Vm0Dz+3VK57hqoSlNrouB43AyOlNQFMUowA=
+github.com/verda-cloud/verdacloud-sdk-go v1.4.3/go.mod h1:pmlpiCL9fTSikZ3qWLJPpHOG0E8PKkQVUX5s4Z+SktY=
 github.com/vmihailenco/msgpack/v5 v5.4.1 h1:cQriyiUvjTwOHg8QZaPihLWeRAAVoCpE00IUPn0Bjt8=
 github.com/vmihailenco/msgpack/v5 v5.4.1/go.mod h1:GaZTsDaehaPpQVyxrf5mtQlH+pc21PIudVV/E3rRQok=
 github.com/vmihailenco/tagparser/v2 v2.0.0 h1:y09buUbR+b5aycVFQs/g70pqKVZNBmxwAhO7/IwNM9g=
